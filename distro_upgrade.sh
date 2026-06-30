@@ -119,6 +119,59 @@ USE_SUDO=""
 MIRROR_BASE="http://deb.debian.org/debian"
 MIRROR_SECURITY="http://deb.debian.org/debian-security"
 
+# ── Ubuntu 镜像选择 ──────────────────────────────────────────────────────────
+get_ubuntu_mirror_info() {
+    local arch host="" path mirror_url security_url
+    arch=$(uname -m)
+
+    case "${MIRROR:-default}" in
+        cn|china)
+            host="mirrors.aliyun.com"
+            ;;
+        tuna)
+            host="mirrors.tuna.tsinghua.edu.cn"
+            ;;
+        ustc)
+            host="mirrors.ustc.edu.cn"
+            ;;
+    esac
+
+    case "$arch" in
+        aarch64|arm64|armv7l|armhf|ppc64el|s390x|riscv64)
+            path="ubuntu-ports"
+            if [[ -n "$host" ]]; then
+                mirror_url="http://${host}/${path}"
+            else
+                mirror_url="http://ports.ubuntu.com/${path}"
+            fi
+            security_url="$mirror_url"
+            ;;
+        *)
+            path="ubuntu"
+            if [[ -n "$host" ]]; then
+                mirror_url="http://${host}/${path}"
+                security_url="$mirror_url"
+            else
+                mirror_url="http://archive.ubuntu.com/${path}"
+                security_url="http://security.ubuntu.com/${path}"
+            fi
+            ;;
+    esac
+
+    if [[ -n "$host" ]]; then
+        echo "${host}|${mirror_url}|${security_url}"
+    else
+        case "$arch" in
+            aarch64|arm64|armv7l|armhf|ppc64el|s390x|riscv64)
+                echo "ports.ubuntu.com|${mirror_url}|${security_url}"
+                ;;
+            *)
+                echo "archive.ubuntu.com|${mirror_url}|${security_url}"
+                ;;
+        esac
+    fi
+}
+
 # ── 安全交互输入（缺失 /dev/tty 时优雅降级，如 cron / systemd 自动化环境）──
 # 用法: safe_read "提示文本" [默认值]
 safe_read() {
@@ -543,8 +596,11 @@ check_system() {
     check_host="deb.debian.org"
     check_url="${MIRROR_BASE}"
     if [[ "$os_id" == "ubuntu" ]]; then
-        check_host="archive.ubuntu.com"
-        check_url="http://archive.ubuntu.com/ubuntu"
+        local ubuntu_mirror_info
+        ubuntu_mirror_info=$(get_ubuntu_mirror_info)
+        check_host="${ubuntu_mirror_info%%|*}"
+        check_url="${ubuntu_mirror_info#*|}"
+        check_url="${check_url%%|*}"
     fi
 
     local net_ok=0
@@ -1068,13 +1124,19 @@ check_upgrade_ubuntu() {
 
     echo "  内存:     $(free -h | awk 'NR==2{printf "已用 %s / 总计 %s", $3, $2}')"
 
-    if ping -c 1 -W 5 archive.ubuntu.com >/dev/null 2>&1; then
-        echo "  网络:     ✅ 可连接 archive.ubuntu.com"
-    elif { command -v wget >/dev/null 2>&1 && wget -q --timeout=10 --spider "http://archive.ubuntu.com/ubuntu" 2>/dev/null; } \
-      || { command -v curl >/dev/null 2>&1 && curl -s --connect-timeout 10 --head "http://archive.ubuntu.com/ubuntu" >/dev/null 2>&1; }; then
+    local ubuntu_mirror_info ubuntu_ping_host ubuntu_check_url
+    ubuntu_mirror_info=$(get_ubuntu_mirror_info)
+    ubuntu_ping_host="${ubuntu_mirror_info%%|*}"
+    ubuntu_check_url="${ubuntu_mirror_info#*|}"
+    ubuntu_check_url="${ubuntu_check_url%%|*}"
+
+    if ping -c 1 -W 5 "$ubuntu_ping_host" >/dev/null 2>&1; then
+        echo "  网络:     ✅ 可连接 ${ubuntu_ping_host}"
+    elif { command -v wget >/dev/null 2>&1 && wget -q --timeout=10 --spider "$ubuntu_check_url" 2>/dev/null; } \
+      || { command -v curl >/dev/null 2>&1 && curl -s --connect-timeout 10 --head "$ubuntu_check_url" >/dev/null 2>&1; }; then
         echo "  网络:     ⚡ ICMP 不可达但 HTTP 可达（可能被阻断 ICMP）"
     else
-        echo "  网络:     ⚠️  无法连接 archive.ubuntu.com（ICMP + HTTP 均失败）"
+        echo "  网络:     ⚠️  无法连接 ${ubuntu_ping_host}（ICMP + HTTP 均失败）"
     fi
 
     echo "═══════════════════════════════════════════"
@@ -1370,22 +1432,11 @@ ubuntu_upgrade() {
     clean_apt_sources "$nxt_codename"
 
     # 确定 Ubuntu 镜像源
-    local ubuntu_mirror="http://archive.ubuntu.com/ubuntu"
-    local ubuntu_security="http://security.ubuntu.com/ubuntu"
-    case "${MIRROR:-default}" in
-        cn|china)
-            ubuntu_mirror="http://mirrors.aliyun.com/ubuntu"
-            ubuntu_security="http://mirrors.aliyun.com/ubuntu"
-            ;;
-        tuna)
-            ubuntu_mirror="http://mirrors.tuna.tsinghua.edu.cn/ubuntu"
-            ubuntu_security="http://mirrors.tuna.tsinghua.edu.cn/ubuntu"
-            ;;
-        ustc)
-            ubuntu_mirror="http://mirrors.ustc.edu.cn/ubuntu"
-            ubuntu_security="http://mirrors.ustc.edu.cn/ubuntu"
-            ;;
-    esac
+    local ubuntu_mirror_info ubuntu_mirror ubuntu_security
+    ubuntu_mirror_info=$(get_ubuntu_mirror_info)
+    ubuntu_mirror="${ubuntu_mirror_info#*|}"
+    ubuntu_mirror="${ubuntu_mirror%%|*}"
+    ubuntu_security="${ubuntu_mirror_info##*|}"
 
     # ── 步骤 1: 备份并替换 sources.list ──────────────────────────────────────
     log_info "步骤 1/4: 更新软件源配置 → $nxt_codename"

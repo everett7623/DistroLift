@@ -37,6 +37,18 @@ trap - EXIT
 [[ "$(get_next_version 22.04 ubuntu)" == "24.04" ]] || fail "Ubuntu 22.04 target"
 [[ -z "$(get_next_version 26.04 ubuntu)" ]] || fail "Ubuntu latest no further upgrade"
 
+orig_uname="$(declare -f uname 2>/dev/null || true)"
+uname() { echo aarch64; }
+[[ "$(get_ubuntu_mirror_info)" == "ports.ubuntu.com|http://ports.ubuntu.com/ubuntu-ports|http://ports.ubuntu.com/ubuntu-ports" ]] || fail "Ubuntu arm64 ports mirror"
+[[ "$(MIRROR=cn get_ubuntu_mirror_info)" == "mirrors.aliyun.com|http://mirrors.aliyun.com/ubuntu-ports|http://mirrors.aliyun.com/ubuntu-ports" ]] || fail "Ubuntu arm64 cn mirror"
+uname() { echo x86_64; }
+[[ "$(get_ubuntu_mirror_info)" == "archive.ubuntu.com|http://archive.ubuntu.com/ubuntu|http://security.ubuntu.com/ubuntu" ]] || fail "Ubuntu amd64 mirror"
+if [[ -n "$orig_uname" ]]; then
+    eval "$orig_uname"
+else
+    unset -f uname
+fi
+
 # Validate default distro-aware routing via get_os_id fallback (without passing explicit distro arg)
 orig_get_os_id="$(declare -f get_os_id)"
 eval "get_os_id() { echo ubuntu; }"

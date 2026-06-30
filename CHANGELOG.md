@@ -16,6 +16,7 @@
 - 修复 Ubuntu 下 `--version` 仍按 Debian 规则解析导致显示异常的问题。
 - 修复 Ubuntu 升级流程缺少锁等待、运行时注入检查、initramfs 预检与 dpkg 预修复的问题。
 - 修复系统网络连通性检查在 Ubuntu 环境仍固定检测 Debian 主机的问题。
+- 修复 Ubuntu arm64 / 其他 ports 架构仍写入 `archive.ubuntu.com` / `security.ubuntu.com` 的问题，升级源现在按架构切换到 `ubuntu-ports`。
 
 ## v3.6 - 2026-06-10
 
