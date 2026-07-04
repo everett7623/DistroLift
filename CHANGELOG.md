@@ -14,7 +14,7 @@
 
 - `--preflight` 恢复为安静预检，只输出检查过程，不显示 DistroLift 欢迎页和风险确认。
 - 默认升级入口继续显示 DistroLift 脚本信息、用途、项目提示和风险清单，并要求输入 `YES` 后继续。
-- README 主运行命令简化为 `sudo bash distro_upgrade.sh`，无需先 `chmod +x`。
+- README 主运行命令简化为一行下载并执行，无需先 `chmod +x`。
 
 ## v3.7.2 - 2026-07-04
 

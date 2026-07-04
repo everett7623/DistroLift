@@ -55,27 +55,16 @@
 ### 一键安装运行
 
 ```bash
-rm -f distro_upgrade.sh
-
-wget -O distro_upgrade.sh \
-  https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh
-
-sudo bash distro_upgrade.sh
+wget -O distro_upgrade.sh https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh && sudo bash distro_upgrade.sh
 ```
 
-也可以使用带 HTTPS 限制的 `curl` 下载：
+如果没有 `wget`，使用 `curl`：
 
 ```bash
-rm -f distro_upgrade.sh
-
-curl -fL --proto '=https' --tlsv1.2 \
-  -o distro_upgrade.sh \
-  https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh
-
-sudo bash distro_upgrade.sh
+curl -fsSL -o distro_upgrade.sh https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh && sudo bash distro_upgrade.sh
 ```
 
-> 默认使用 jsDelivr CDN，避免很多 VPS 访问 GitHub Raw 时卡在 IPv6。下载后建议先核对 GitHub 中的文件内容或发布校验值，不要直接执行来源不明的脚本。
+> 默认使用 jsDelivr CDN，避免很多 VPS 访问 GitHub Raw 时卡在 IPv6。脚本会在正式升级前显示风险提示并要求确认。
 
 ### 基本用法
 
@@ -476,7 +465,7 @@ systemctl status networking systemd-networkd NetworkManager
 
 | 版本 | 日期 | 主要变更 |
 |------|------|----------|
-| **v3.7.3** | 2026-07-04 | `--preflight` 恢复为安静预检；默认升级入口显示 DistroLift 脚本信息、用途、项目提示和风险确认；README 主命令简化为 `sudo bash distro_upgrade.sh` |
+| **v3.7.3** | 2026-07-04 | `--preflight` 恢复为安静预检；默认升级入口显示 DistroLift 脚本信息、用途、项目提示和风险确认；README 主命令简化为一行下载并执行 |
 | **v3.7.2** | 2026-07-04 | 调整启动风险页结构，拆分 DistroLift 菜单展示与真实升级 `YES` 确认 |
 | **v3.7.1** | 2026-07-04 | 项目展示名更新为 DistroLift Auto Upgrade；真实升级前新增集中风险确认页，确认一次后稳定版流程继续自动化 |
 | **v3.7** | 2026-07-04 | 自动化与 VPS 成功率优化：稳定版默认自动继续、低内存资源门槛、临时 Swap、Debian/Ubuntu 共用 apt 恢复、修正 Ubuntu 26.04 Resolute |
