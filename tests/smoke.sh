@@ -17,6 +17,8 @@ grep -q -- '--allow-testing' <<<"$help_output" || fail "help misses --allow-test
 grep -q -- '--preflight' <<<"$help_output" || fail "help misses --preflight"
 grep -q -- '--cleanup' <<<"$help_output" || fail "help misses --cleanup"
 grep -q -- '--self-update' <<<"$help_output" || fail "help misses --self-update"
+grep -q -- '--require-confirm' <<<"$help_output" || fail "help misses --require-confirm"
+grep -q -- '--auto-reboot' <<<"$help_output" || fail "help misses --auto-reboot"
 grep -q -- 'Ubuntu 20.04 (Focal)' <<<"$help_output" || fail "help misses Ubuntu LTS path"
 
 # Source functions without executing main.
@@ -34,6 +36,7 @@ trap - EXIT
 [[ -z "$(get_next_version 14)" ]] || fail "Forky no further upgrade"
 [[ "$(get_version_info 22.04 ubuntu)" == "jammy|oldlts" ]] || fail "Ubuntu 22.04 status"
 [[ "$(get_version_info 24.04 ubuntu)" == "noble|lts" ]] || fail "Ubuntu 24.04 status"
+[[ "$(get_version_info 26.04 ubuntu)" == "resolute|lts" ]] || fail "Ubuntu 26.04 status"
 [[ "$(get_next_version 22.04 ubuntu)" == "24.04" ]] || fail "Ubuntu 22.04 target"
 [[ -z "$(get_next_version 26.04 ubuntu)" ]] || fail "Ubuntu latest no further upgrade"
 
@@ -67,7 +70,38 @@ fi
 grep -q 'check_initramfs_health' "$SCRIPT" || fail "missing initramfs preflight"
 grep -q 'check_runtime_injection' "$SCRIPT" || fail "missing runtime injection check"
 grep -q 'debian-archive-keyring' "$SCRIPT" || fail "missing keyring update before source switch"
+grep -q 'ubuntu-keyring' "$SCRIPT" || fail "missing Ubuntu keyring recovery"
 grep -Fq '[trusted=yes]' "$SCRIPT" || fail "missing GPG error recovery path"
+grep -q 'MIN_PHYSICAL_MEM_MB' "$SCRIPT" || fail "missing low-memory resource gate"
+grep -q 'prepare_temporary_swap' "$SCRIPT" || fail "missing temporary swap helper"
+grep -q 'REQUIRE_CONFIRM' "$SCRIPT" || fail "missing stable upgrade confirmation override"
+
+orig_free="$(declare -f free 2>/dev/null || true)"
+orig_df="$(declare -f df 2>/dev/null || true)"
+orig_mount="$(declare -f mount 2>/dev/null || true)"
+free() {
+    printf '%s\n' '              total        used        free      shared  buff/cache   available'
+    printf '%s\n' 'Mem:            512         100         100           0         100         300'
+    printf '%s\n' 'Swap:             0           0           0'
+}
+df() {
+    printf '%s\n' 'Filesystem 1M-blocks Used Available Use% Mounted on'
+    printf '%s\n' '/dev/vda1 8192 1024 7168 13% /'
+}
+mount() { return 1; }
+[[ "$(calculate_temp_swap_mb)" == "1024" ]] || fail "low-memory temp swap sizing"
+check_upgrade_capacity >/dev/null 2>&1 || fail "512MB VPS with disk should be upgradeable via temp swap"
+free() {
+    printf '%s\n' '              total        used        free      shared  buff/cache   available'
+    printf '%s\n' 'Mem:            256         100          50           0          50         100'
+    printf '%s\n' 'Swap:             0           0           0'
+}
+if check_upgrade_capacity >/dev/null 2>&1; then
+    fail "256MB VPS should be rejected"
+fi
+if [[ -n "$orig_free" ]]; then eval "$orig_free"; else unset -f free; fi
+if [[ -n "$orig_df" ]]; then eval "$orig_df"; else unset -f df; fi
+if [[ -n "$orig_mount" ]]; then eval "$orig_mount"; else unset -f mount; fi
 
 failure_log="$(mktemp)"
 printf '%s\n' "E: /usr/share/initramfs-tools/hooks/fsck failed with return 1." >"$failure_log"

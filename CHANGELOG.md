@@ -10,6 +10,10 @@
 
 - 新增 Ubuntu LTS 升级状态映射与检测：支持 `20.04 → 22.04 → 24.04 → 26.04` 相邻升级路径。
 - `--check` 增加 Ubuntu 分支，输出 Ubuntu 专属升级状态与网络检查结果。
+- 稳定版相邻升级默认自动继续，新增 `--require-confirm` 用于恢复人工确认。
+- 新增 `--auto-reboot`，仅在用户显式启用时升级成功后自动重启。
+- 新增低内存 / NAT VPS 资源门槛，物理内存、Swap、根分区和 `/boot` 不合理时在切换软件源前停止。
+- 低内存但仍可升级的 VPS 会自动创建临时 Swap，脚本退出时关闭并删除。
 
 ### 修复
 
@@ -17,6 +21,13 @@
 - 修复 Ubuntu 升级流程缺少锁等待、运行时注入检查、initramfs 预检与 dpkg 预修复的问题。
 - 修复系统网络连通性检查在 Ubuntu 环境仍固定检测 Debian 主机的问题。
 - 修复 Ubuntu arm64 / 其他 ports 架构仍写入 `archive.ubuntu.com` / `security.ubuntu.com` 的问题，升级源现在按架构切换到 `ubuntu-ports`。
+- 修复 Ubuntu 26.04 LTS 代号误写为 Plucky，改为 Resolute。
+
+### 优化
+
+- Debian 与 Ubuntu 共用 `apt-get update` 自动恢复逻辑，GPG / keyring / 404 错误按同一策略处理。
+- Ubuntu 分支升级后同样执行网络核对、initramfs 校验和 GRUB 配置刷新。
+- 开发流程增加版本前本地备份要求，避免制作新版本时覆盖上一版状态。
 
 ## v3.6 - 2026-06-10
 

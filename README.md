@@ -8,7 +8,7 @@
 [![Debian](https://img.shields.io/badge/Debian-11--13-red.svg)](https://www.debian.org/)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-LTS-orange.svg)](https://ubuntu.com/)
 [![Bash](https://img.shields.io/badge/Language-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Version](https://img.shields.io/badge/Version-3.6-brightgreen.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
+[![Version](https://img.shields.io/badge/Version-3.7-brightgreen.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
 ![Visitors](https://visitor-badge.laobi.icu/badge?page_id=everett7623.debian-auto-upgrade)
 
 面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS 环境深度优化，具备完善的错误恢复与容错能力。
@@ -27,10 +27,11 @@
 - 🖥️ **GRUB 保守处理** — 自动识别 UEFI/BIOS，常规升级仅刷新配置，不自动写入 MBR
 - 🏗️ **多架构兼容** — 支持 x86_64 和 ARM64 (aarch64)，自动选择正确的 GRUB 包和目标
 - 🐳 **容器智能识别** — 自动检测 OpenVZ / LXC / Docker 环境，跳过 GRUB 和 /boot 相关操作
-- 🤖 **无人值守安全** — 缺失 `/dev/tty` 时优雅降级，兼容 cron / systemd 自动化环境
+- 🤖 **自动化优先** — 稳定版相邻升级默认自动继续，`--require-confirm` 可恢复人工确认
+- 🧠 **低内存 VPS 保护** — 检查内存、Swap、根分区和 `/boot`，合理时自动创建临时 Swap，过低配置停止升级
 - 📊 **彩色日志输出** — 带时间戳的分级日志，`--debug` 模式输出完整诊断信息
 - 🔍 **升级前后验证** — 自动校验升级结果，失败时触发错误恢复流程
-- ⚠️ **风险分级确认** — 稳定版单次确认，测试版强制输入 `YES` 二次确认
+- ⚠️ **风险分级确认** — 稳定版默认自动执行，测试版仍强制输入 `YES`
 
 ## 🎯 支持的升级路径
 
@@ -44,7 +45,7 @@
 | Debian 13 (Trixie) | Debian 14 (Forky) | ⚠️ 实验性 | 🧪 谨慎 | 需 `--allow-testing`，不建议生产环境 |
 | Ubuntu 20.04 (Focal) | Ubuntu 22.04 (Jammy) | ✅ 支持 | 🔒 稳定 | 仅支持 LTS 相邻升级 |
 | Ubuntu 22.04 (Jammy) | Ubuntu 24.04 (Noble) | ✅ 支持 | 🔒 稳定 | 仅支持 LTS 相邻升级 |
-| Ubuntu 24.04 (Noble) | Ubuntu 26.04 (Plucky) | ✅ 支持 | 🔒 稳定 | 仅支持 LTS 相邻升级 |
+| Ubuntu 24.04 (Noble) | Ubuntu 26.04 (Resolute) | ✅ 支持 | 🔒 稳定 | 仅支持 LTS 相邻升级 |
 
 > **建议：** 生产系统请升级到 Debian 13 (Trixie)，这是当前稳定版。Debian 8-10 已进入归档范围，镜像、签名和中间升级要求复杂，请先阅读 [历史脚本说明](scripts/README.md) 及 Debian 官方 Release Notes。
 
@@ -108,7 +109,9 @@ sudo ./distro_upgrade.sh --help
 | `--fix-grub` | 显式执行 GRUB 引导修复 |
 | `--cleanup` | 清理升级后的系统垃圾（旧内核、废弃包、残留配置） |
 | `--self-update` | 从 GitHub 下载最新版本替换当前脚本 |
-| `--force` | 跳过所有确认提示（慎用） |
+| `--force` | 跳过强制确认提示（慎用） |
+| `--require-confirm` | 稳定版升级也要求人工确认 |
+| `--auto-reboot` | 升级成功后自动重启（需提前确认控制台可用） |
 | `--stable-only` | 仅升级到稳定版（默认，推荐） |
 | `--allow-testing` | 允许升级到 Debian 14 Forky（testing，仅 Debian） |
 | `--mirror <cn\|tuna\|ustc>` | 使用指定国内镜像源 |
@@ -183,7 +186,7 @@ sudo ./distro_upgrade.sh --self-update
 | `ustc` | 中科大 mirrors.ustc.edu.cn | 教育网备选 |
 | _(不填)_ | Debian 官方 deb.debian.org | 境外服务器 |
 
-镜像选项只影响 Debian 官方仓库。第三方仓库会在升级前暂时禁用，升级完成并确认供应商支持目标 Debian 版本后再逐项恢复。
+镜像选项影响 Debian 官方仓库和 Ubuntu 官方仓库；Ubuntu 非 amd64 架构会自动切换到 `ubuntu-ports`。第三方仓库会在升级前暂时禁用，升级完成并确认供应商支持目标版本后再逐项恢复。
 
 ## 🔧 APT 源自动清理（安全处理）
 
@@ -192,8 +195,9 @@ sudo ./distro_upgrade.sh --self-update
 - 自动备份 `/etc/apt/sources.list.d/`
 - 同时识别并禁用传统 `.list` 与 Deb822 `.sources` 附加源
 - 注释掉主 `sources.list` 中启用的 backports 行
-- `apt-get update` 检测到 404 时再次禁用残留附加源并重试
+- `apt-get update` 检测到 GPG / keyring / 404 时自动恢复并重试
 - 写入新版 `sources.list` 时适配 Debian 11 的安全源格式和 Debian 12+ 的 `non-free-firmware`
+- Ubuntu 使用 `ubuntu-keyring` 恢复签名验证，Debian 使用 `debian-archive-keyring`
 - 升级后不自动恢复第三方源，避免旧仓库再次污染软件包状态
 
 附加源备份目录形如：
@@ -206,7 +210,7 @@ sudo ./distro_upgrade.sh --self-update
 
 ### 四阶段升级流程
 
-1. **升级前检查** — 检查版本、磁盘、内存、网络、启动模式、动态库依赖及 initramfs 生成能力
+1. **升级前检查** — 检查版本、磁盘、内存、Swap、网络、启动模式、动态库依赖及 initramfs 生成能力
 2. **最小升级** (`apt-get upgrade`) — 先处理不涉及复杂依赖变更的软件包
 3. **完整升级** (`apt-get dist-upgrade`) — 执行完整发行版升级
 4. **升级后处理** — 验证最新内核 initramfs、刷新 GRUB 配置并验证目标版本
@@ -223,6 +227,8 @@ sudo ./distro_upgrade.sh --self-update
 - 完整升级失败后不自动重复整套升级流程
 - APT 默认不下载源码索引和翻译索引
 - APT 已生成最新内核 initramfs 时不再重复重建全部旧内核
+- 低内存 VPS 仅在资源仍合理时创建临时 Swap；过低配置不强行升级
+- 升级成功后默认不自动重启，只有显式 `--auto-reboot` 才执行重启
 
 完整约束见 [docs/SAFETY.md](docs/SAFETY.md)。
 
@@ -237,10 +243,11 @@ sudo ./distro_upgrade.sh --self-update
 
 ### 最低要求
 
-- 主脚本：Debian 11、12 或 13
+- 主脚本：Debian 11、12、13 或 Ubuntu 20.04 / 22.04 / 24.04 / 26.04 LTS
 - Bash 4.4 或更高版本
 - 根分区可用空间 ≥ 2GB
-- 可用内存 ≥ 256MB
+- 物理内存 ≥ 384MB
+- 内存 + Swap ≥ 1GB；低内存 VPS 需要有足够磁盘空间创建临时 Swap
 - 稳定的互联网连接
 - root 权限或可用的 `sudo`
 
@@ -248,7 +255,7 @@ sudo ./distro_upgrade.sh --self-update
 
 - 根分区可用空间 ≥ 4GB
 - `/boot` 分区可用空间 ≥ 200MB
-- 可用内存 ≥ 1GB
+- 物理内存 ≥ 1GB；小内存 NAT VPS 建议先扩容或增加 Swap
 - 已完成当前版本全部更新并重启到最新内核
 - 具备 sudo 权限的用户账户
 - 具备可回滚快照及带外控制台访问
@@ -288,12 +295,14 @@ sudo ./distro_upgrade.sh --self-update
 
 | 升级类型 | 确认方式 |
 |----------|----------|
-| 稳定版 → 稳定版 | `[y/N]` 单次确认 |
+| 稳定版 → 稳定版 | 默认自动继续；使用 `--require-confirm` 可恢复 `[y/N]` |
 | 稳定版 → 测试版 | 需手动输入 `YES`（大写）并阅读风险说明 |
 | `--stable-only` 模式 | 不提供测试版升级选项 |
 | `--force` 模式 | 跳过交互确认（极度谨慎） |
+| `--auto-reboot` 模式 | 升级成功后自动重启，不再询问 |
 
 `--force` 只跳过交互确认，不代表操作无风险，也不能替代快照、备份和控制台访问。
+`--auto-reboot` 仅适合已确认控制台、快照和维护窗口的场景。
 
 ## 🐛 常见问题
 
@@ -444,6 +453,7 @@ systemctl status networking systemd-networkd NetworkManager
 
 | 版本 | 日期 | 主要变更 |
 |------|------|----------|
+| **v3.7** | 2026-07-04 | 自动化与 VPS 成功率优化：稳定版默认自动继续、低内存资源门槛、临时 Swap、Debian/Ubuntu 共用 apt 恢复、修正 Ubuntu 26.04 Resolute |
 | **v3.6** | 2026-06-10 | VPS 兼容性全面加固：ARM64 架构支持、容器自动识别、非交互终端安全降级、CDN 自更新回退、EFI 多路径检测、GPG 恢复路径修复；关联数组重构、日志拆分等 |
 | **v3.5** | 2026-06-10 | 新增 `--cleanup`（升级后五步清理）和 `--self-update`（从 GitHub 自动更新）；修复跨版本 GPG 签名验证和云镜像 initramfs 预检失败 |
 | **v3.4** | 2026-06-10 | 代码审查：修复 dpkg ERR 陷阱、lsblk 显示缺陷、forky 检测缺失、GPG 密钥环错误；注释全面中文化 |

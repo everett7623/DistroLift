@@ -59,6 +59,12 @@
 #                     - 关联数组重构版本元数据：新增 Debian 版本只需追加三条记录
 #                     - fix_only_mode 添加 stop_apt_units 防止定时任务抢占锁
 #                     - mirror 无效值主动警告、wget 缺失提示、blkid sudo 前缀等细节修复
+#   v3.7  2026-07-04  自动化与 VPS 升级成功率优化
+#                     - 稳定版相邻升级默认自动继续，测试版仍需显式确认
+#                     - 增加低内存 / NAT VPS 资源门槛，不合理环境在切源前停止
+#                     - 低内存但可升级的 VPS 自动创建临时 swap，退出时清理
+#                     - Debian / Ubuntu 共用 apt update 恢复路径，Ubuntu 使用 ubuntu-keyring
+#                     - 修正 Ubuntu 26.04 LTS 代号为 resolute
 # =============================================================================
 # 使用方法:
 #   chmod +x distro_upgrade.sh
@@ -70,8 +76,11 @@
 # =============================================================================
 # 注意事项:
 #   - 需要 root 或 sudo 权限
-#   - VPS 用户请确保有 VNC/控制台访问，以防重启后 SSH 断开
-#   - 升级前建议快照或备份重要数据
+#   - 发行版升级有中断、网络失联、软件源不兼容、无法启动等风险
+#   - 升级前必须创建 VPS / 云盘快照，另行备份业务数据和关键配置
+#   - VPS 用户请确保有 VNC / 串口 / 控制台访问，以防重启后 SSH 断开
+#   - 小内存 / NAT VPS 会先做资源门槛检查，过低配置不强行升级
+#   - 默认仅支持 Debian 与 Ubuntu LTS 相邻升级，其他系统后续单独扩展
 #   - Debian 13 (Trixie) 于 2025-08-09 正式发布为 stable，当前最新为 13.5
 #   - Debian 12 (Bookworm) 已进入 oldstable，仍在安全支持期内
 # =============================================================================
@@ -79,9 +88,9 @@
 set -Ee -o pipefail
 
 # ── 脚本元信息 ────────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.6"
+SCRIPT_VERSION="3.7"
 SCRIPT_NAME="distro_upgrade.sh"
-SCRIPT_DATE="2026-06-10"
+SCRIPT_DATE="2026-07-04"
 SCRIPT_REPO="https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh"
 # GitHub 在国内可能被阻断，提供 CDN 回退地址
 SCRIPT_REPO_CDN="https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh"
@@ -93,6 +102,18 @@ APT_DIST_UPGRADE_LOG="${RUN_DIR}/apt-dist-upgrade.log"
 INITRAMFS_POST_LOG="${RUN_DIR}/initramfs-post.log"
 KEEP_RUN_DIR=0
 STOPPED_APT_UNITS=()
+TEMP_SWAP_FILE=""
+TEMP_SWAP_CREATED=0
+
+# ── VPS 资源门槛 ──────────────────────────────────────────────────────────────
+MIN_ROOT_FREE_MB="${MIN_ROOT_FREE_MB:-2048}"
+MIN_BOOT_FREE_MB="${MIN_BOOT_FREE_MB:-120}"
+RECOMMENDED_BOOT_FREE_MB="${RECOMMENDED_BOOT_FREE_MB:-200}"
+MIN_PHYSICAL_MEM_MB="${MIN_PHYSICAL_MEM_MB:-384}"
+LOW_MEM_MB="${LOW_MEM_MB:-1024}"
+MIN_COMBINED_MEM_SWAP_MB="${MIN_COMBINED_MEM_SWAP_MB:-1024}"
+TARGET_COMBINED_MEM_SWAP_MB="${TARGET_COMBINED_MEM_SWAP_MB:-1536}"
+MAX_TEMP_SWAP_MB="${MAX_TEMP_SWAP_MB:-2048}"
 
 # ── 颜色定义 ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -303,7 +324,7 @@ declare -A DEBIAN_NEXT=(
 
 # ── Ubuntu LTS 版本映射 ──────────────────────────────────────────────────────
 declare -A UBUNTU_CODENAME=(
-    [20.04]="focal" [22.04]="jammy" [24.04]="noble" [26.04]="plucky"
+    [20.04]="focal" [22.04]="jammy" [24.04]="noble" [26.04]="resolute"
 )
 declare -A UBUNTU_STATUS=(
     [20.04]="oldlts" [22.04]="oldlts" [24.04]="lts" [26.04]="lts"
@@ -527,6 +548,151 @@ clean_old_kernels() {
     fi
 }
 
+# ── VPS 资源门槛与低内存辅助 ─────────────────────────────────────────────────
+get_mem_total_mb() {
+    free -m 2>/dev/null | awk 'NR==2{print int($2)}' || echo 0
+}
+
+get_swap_total_mb() {
+    free -m 2>/dev/null | awk 'NR==3{print int($2)}' || echo 0
+}
+
+get_available_mb() {
+    local mount_point="$1"
+    df -Pm "$mount_point" 2>/dev/null | awk 'NR==2{print int($4)}' || echo 0
+}
+
+calculate_temp_swap_mb() {
+    local mem_total swap_total combined needed
+    mem_total=$(get_mem_total_mb)
+    swap_total=$(get_swap_total_mb)
+    combined=$((mem_total + swap_total))
+
+    if (( mem_total == 0 )); then
+        echo 0
+        return
+    fi
+
+    if (( mem_total >= LOW_MEM_MB || combined >= TARGET_COMBINED_MEM_SWAP_MB )); then
+        echo 0
+        return
+    fi
+
+    needed=$((TARGET_COMBINED_MEM_SWAP_MB - combined))
+    (( needed < 512 )) && needed=512
+    (( needed > MAX_TEMP_SWAP_MB )) && needed="$MAX_TEMP_SWAP_MB"
+    echo "$needed"
+}
+
+check_upgrade_capacity() {
+    local mem_total swap_total combined root_avail needed
+    mem_total=$(get_mem_total_mb)
+    swap_total=$(get_swap_total_mb)
+    root_avail=$(get_available_mb /)
+    combined=$((mem_total + swap_total))
+
+    log_info "资源检查: 内存 ${mem_total}MB，Swap ${swap_total}MB，根分区可用 ${root_avail}MB"
+
+    if (( mem_total == 0 || root_avail == 0 )); then
+        log_warning "无法完整读取内存或磁盘信息，继续使用保守升级流程"
+        return 0
+    fi
+
+    if (( mem_total < MIN_PHYSICAL_MEM_MB )); then
+        log_error "物理内存仅 ${mem_total}MB，低于 ${MIN_PHYSICAL_MEM_MB}MB 门槛"
+        log_error "此类小内存 / NAT VPS 不建议强行做发行版升级，请先扩容或迁移"
+        return 1
+    fi
+
+    if (( root_avail < MIN_ROOT_FREE_MB )); then
+        log_error "根分区可用空间仅 ${root_avail}MB，低于 ${MIN_ROOT_FREE_MB}MB 门槛"
+        log_error "请先扩容磁盘或清理空间后再升级"
+        return 1
+    fi
+
+    if mount | grep -q " /boot "; then
+        local boot_avail
+        boot_avail=$(get_available_mb /boot)
+        if (( boot_avail > 0 && boot_avail < MIN_BOOT_FREE_MB )); then
+            log_error "/boot 可用空间仅 ${boot_avail}MB，低于 ${MIN_BOOT_FREE_MB}MB 门槛"
+            log_error "请先清理旧内核或扩容 /boot 后再升级"
+            return 1
+        elif (( boot_avail > 0 && boot_avail < RECOMMENDED_BOOT_FREE_MB )); then
+            log_warning "/boot 可用空间 ${boot_avail}MB，低于推荐值 ${RECOMMENDED_BOOT_FREE_MB}MB"
+        fi
+    fi
+
+    needed=$(calculate_temp_swap_mb)
+    if (( needed > 0 )); then
+        if (( combined < MIN_COMBINED_MEM_SWAP_MB )); then
+            log_warning "内存 + Swap 仅 ${combined}MB，升级时将尝试创建 ${needed}MB 临时 Swap"
+        else
+            log_warning "检测到低内存 VPS，升级时将尝试创建 ${needed}MB 临时 Swap 提升成功率"
+        fi
+
+        if (( root_avail < MIN_ROOT_FREE_MB + needed )); then
+            log_error "创建临时 Swap 后根分区剩余空间不足，当前可用 ${root_avail}MB，需要至少 $((MIN_ROOT_FREE_MB + needed))MB"
+            log_error "请先扩容或释放空间；不建议在此配置上强行升级"
+            return 1
+        fi
+    fi
+}
+
+prepare_temporary_swap() {
+    local needed mem_total swap_total combined root_avail
+    needed=$(calculate_temp_swap_mb)
+    (( needed <= 0 )) && return 0
+
+    mem_total=$(get_mem_total_mb)
+    swap_total=$(get_swap_total_mb)
+    combined=$((mem_total + swap_total))
+    root_avail=$(get_available_mb /)
+    if (( root_avail < MIN_ROOT_FREE_MB + needed )); then
+        log_error "根分区空间不足，无法安全创建 ${needed}MB 临时 Swap"
+        return 1
+    fi
+
+    TEMP_SWAP_FILE="${TEMP_SWAP_FILE:-/var/tmp/debian-auto-upgrade-${RUN_ID}.swap}"
+    log_info "创建 ${needed}MB 临时 Swap: $TEMP_SWAP_FILE"
+    $USE_SUDO rm -f "$TEMP_SWAP_FILE" 2>/dev/null || true
+    if command -v fallocate >/dev/null 2>&1; then
+        if ! $USE_SUDO fallocate -l "${needed}M" "$TEMP_SWAP_FILE" 2>/dev/null \
+          && ! $USE_SUDO dd if=/dev/zero of="$TEMP_SWAP_FILE" bs=1M count="$needed" >/dev/null 2>&1; then
+            log_error "无法创建临时 Swap 文件: $TEMP_SWAP_FILE"
+            return 1
+        fi
+    else
+        if ! $USE_SUDO dd if=/dev/zero of="$TEMP_SWAP_FILE" bs=1M count="$needed" >/dev/null 2>&1; then
+            log_error "无法创建临时 Swap 文件: $TEMP_SWAP_FILE"
+            return 1
+        fi
+    fi
+
+    if ! $USE_SUDO chmod 600 "$TEMP_SWAP_FILE" \
+      || ! $USE_SUDO mkswap "$TEMP_SWAP_FILE" >/dev/null 2>&1 \
+      || ! $USE_SUDO swapon "$TEMP_SWAP_FILE" >/dev/null 2>&1; then
+        $USE_SUDO swapoff "$TEMP_SWAP_FILE" >/dev/null 2>&1 || true
+        $USE_SUDO rm -f "$TEMP_SWAP_FILE" 2>/dev/null || true
+        if (( combined < MIN_COMBINED_MEM_SWAP_MB )); then
+            log_error "临时 Swap 创建失败，当前内存 + Swap 仅 ${combined}MB，已停止升级"
+            return 1
+        fi
+        log_warning "临时 Swap 创建失败，但当前内存 + Swap 为 ${combined}MB，继续保守升级"
+        return 0
+    fi
+
+    TEMP_SWAP_CREATED=1
+    log_success "临时 Swap 已启用，退出脚本时会自动关闭并删除"
+}
+
+cleanup_temporary_swap() {
+    if [[ "$TEMP_SWAP_CREATED" == "1" && -n "$TEMP_SWAP_FILE" ]]; then
+        log_info "关闭并删除临时 Swap: $TEMP_SWAP_FILE"
+        $USE_SUDO swapoff "$TEMP_SWAP_FILE" >/dev/null 2>&1 || true
+        $USE_SUDO rm -f "$TEMP_SWAP_FILE" 2>/dev/null || true
+    fi
+}
+
 # ── 清理无效 / 过期 APT 源（升级前必须执行）──────────────────────────────────
 # 解决问题：旧版本 backports、第三方源在升级后代号不匹配，导致 apt update 报 404
 clean_apt_sources() {
@@ -586,8 +752,12 @@ check_system() {
 
     # 内存检查
     local avail_mem
-    avail_mem=$(free -m | awk 'NR==2{print $7}')
-    (( avail_mem < 256 )) && log_warning "可用内存不足 256MB，升级可能较慢"
+    avail_mem=$(free -m | awk 'NR==2{print $2}')
+    if (( avail_mem < MIN_PHYSICAL_MEM_MB )); then
+        log_warning "物理内存低于 ${MIN_PHYSICAL_MEM_MB}MB，后续资源门槛检查可能停止升级"
+    elif (( avail_mem < LOW_MEM_MB )); then
+        log_warning "检测到低内存 VPS，升级前会评估并按需创建临时 Swap"
+    fi
 
     # 网络连通性（仅警告，不阻断）
     # ICMP 在某些 VPS 环境被阻断（特别是国内），优先用 HTTP 检测
@@ -759,26 +929,81 @@ stop_apt_units() {
     done
 }
 
+apt_update_with_recovery() {
+    local keyring_pkg="$1"
+    mkdir -p "$RUN_DIR"
+
+    if $USE_SUDO apt-get -o Acquire::Languages=none update 2>&1 | tee "$APT_UPDATE_LOG"; then
+        return 0
+    fi
+
+    log_warning "apt-get update 出现错误（见上），开始自动恢复..."
+
+    if grep -q "NO_PUBKEY\|GPG error\|is not signed" "$APT_UPDATE_LOG"; then
+        log_warning "检测到 GPG 签名验证错误，尝试安装目标版本密钥环: $keyring_pkg"
+        $USE_SUDO sed -i -E 's|^deb[[:space:]]+|deb [trusted=yes] |' /etc/apt/sources.list
+        if ! $USE_SUDO apt-get -o Acquire::Languages=none update 2>/dev/null; then
+            $USE_SUDO sed -i 's/^deb \[trusted=yes\] /deb /' /etc/apt/sources.list
+            log_error "即使临时跳过签名验证，软件包列表更新仍然失败"
+            return 1
+        fi
+
+        DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get install -y "$keyring_pkg" 2>/dev/null || true
+        $USE_SUDO sed -i 's/^deb \[trusted=yes\] /deb /' /etc/apt/sources.list
+
+        if $USE_SUDO apt-get -o Acquire::Languages=none update; then
+            log_success "密钥环已更新，签名验证恢复正常"
+            return 0
+        fi
+        log_warning "签名验证已恢复，但更新仍有错误，继续尝试清理残留源"
+    fi
+
+    if grep -q "404\|Release.*does not have\|does not have a Release file" "$APT_UPDATE_LOG"; then
+        log_warning "检测到 404 / Release 文件错误，禁用残留附加源后重试"
+    else
+        log_warning "尝试禁用残留附加源后再次更新"
+    fi
+
+    if [[ -d /etc/apt/sources.list.d ]]; then
+        find /etc/apt/sources.list.d/ -maxdepth 1 -type f \
+            \( -name "*.list" -o -name "*.sources" \) 2>/dev/null \
+            | while read -r f; do
+                log_warning "  禁用: $f"
+                $USE_SUDO mv "$f" "${f}.disabled-by-debian-upgrade" 2>/dev/null || true
+            done
+    fi
+
+    $USE_SUDO apt-get -o Acquire::Languages=none update || {
+        log_error "软件包列表更新失败，请检查网络、DNS 或镜像源配置"
+        return 1
+    }
+}
+
 # ── 升级前准备 ────────────────────────────────────────────────────────────────
 pre_upgrade_preparation() {
     local target_codename="$1"
+    local os_id="${2:-debian}"
+    local keyring_pkg="debian-archive-keyring"
+    [[ "$os_id" == "ubuntu" ]] && keyring_pkg="ubuntu-keyring"
     log_info "执行升级前准备工作..."
 
     stop_apt_units
     wait_for_apt_locks
+    check_upgrade_capacity
+    prepare_temporary_swap
     check_runtime_injection
     check_initramfs_health
 
     # 修复 dpkg / 损坏依赖
+    $USE_SUDO apt-get clean 2>/dev/null || true
     $USE_SUDO dpkg --audit 2>/dev/null || true
     $USE_SUDO dpkg --configure -a 2>/dev/null || true
     DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get --fix-broken install -y 2>/dev/null || true
 
-    # 关键步骤：更新归档密钥环，确保包含目标版本的 GPG 签名密钥
-    # 必须先更新当前源的密钥环，再切换到新版本源，否则 apt-get update 会报 NO_PUBKEY
-    log_info "更新 Debian 归档密钥环..."
+    # 关键步骤：先在当前源上刷新归档密钥环，降低切换源后的 NO_PUBKEY 风险。
+    log_info "更新归档密钥环: $keyring_pkg"
     $USE_SUDO apt-get update 2>/dev/null || log_warning "当前源更新失败，跳过密钥环更新"
-    DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get install -y --reinstall debian-archive-keyring 2>/dev/null || true
+    DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get install -y --reinstall "$keyring_pkg" 2>/dev/null || true
 
     # 清理旧/无效 sources，避免 404
     clean_apt_sources "$target_codename"
@@ -794,14 +1019,16 @@ pre_upgrade_preparation() {
 
         if [[ -z "$boot_disk" ]]; then
             log_warning "未自动检测到引导磁盘，升级后可能需手动修复 GRUB"
-            if [[ "${FORCE:-0}" != "1" ]]; then
+            if [[ "${REQUIRE_CONFIRM:-0}" == "1" && "${FORCE:-0}" != "1" ]]; then
                 if [[ -e /dev/tty ]]; then
                     read -p "是否继续升级？[y/N]: " -n 1 -r </dev/tty; echo
                 else
-                    log_warning "无交互终端，默认取消升级（使用 --force 跳过确认）"
+                    log_warning "无交互终端，默认取消升级（使用 --force 或取消 --require-confirm 跳过确认）"
                     REPLY=""
                 fi
                 [[ ! $REPLY =~ ^[Yy]$ ]] && { log_info "已取消"; exit 1; }
+            else
+                log_warning "稳定版自动化模式将继续升级；请确保已准备控制台救援路径"
             fi
         else
             log_success "引导磁盘: $boot_disk（模式: $boot_mode）"
@@ -863,13 +1090,17 @@ safe_reboot() {
     echo "╔════════════════════════════════════════╗"
     echo "║           ⚠️  即将重启系统              ║"
     echo "╚════════════════════════════════════════╝"
-    if [[ -e /dev/tty ]]; then
-        read -p "最后确认：确定要重启吗？[y/N]: " -n 1 -r </dev/tty; echo
+    if [[ "${AUTO_REBOOT:-0}" != "1" ]]; then
+        if [[ -e /dev/tty ]]; then
+            read -p "最后确认：确定要重启吗？[y/N]: " -n 1 -r </dev/tty; echo
+        else
+            log_warning "无交互终端，默认取消重启"
+            REPLY=""
+        fi
+        [[ ! $REPLY =~ ^[Yy]$ ]] && { log_info "已取消重启，请稍后手动执行: sudo reboot"; return; }
     else
-        log_warning "无交互终端，默认取消重启"
-        REPLY=""
+        log_warning "--auto-reboot 已启用，升级完成后自动重启"
     fi
-    [[ ! $REPLY =~ ^[Yy]$ ]] && { log_info "已取消重启，请稍后手动执行: sudo reboot"; return; }
 
     log_info "同步文件系统..."
     sync; sync; sync
@@ -911,7 +1142,9 @@ show_help() {
   --fix-grub            专门修复 GRUB 引导
   --cleanup             清理升级后的系统垃圾（旧内核、废弃包、残留配置）
   --self-update         从 GitHub 下载最新版本替换当前脚本
-  --force               跳过所有确认提示
+  --force               跳过强制确认提示
+  --require-confirm     稳定版升级也要求人工确认
+  --auto-reboot         升级成功后自动重启（需提前确认控制台可用）
     --stable-only         仅升级到稳定版（Debian 默认，跳过 testing）
     --allow-testing       允许升级到 Debian 14 Forky（testing，仅 Debian）
   --mirror <cn|tuna|ustc>  使用国内镜像源
@@ -919,6 +1152,8 @@ show_help() {
 ✨ 功能特性:
     ✅ 自动检测并逐级升级 Debian 11 → 12 → 13
     ✅ 支持 Ubuntu LTS 相邻升级：20.04 → 22.04 → 24.04 → 26.04
+    ✅ 稳定版相邻升级默认自动继续，testing 仍需显式确认
+    ✅ 低内存 VPS 自动评估资源并按需创建临时 Swap
   ✅ 升级前备份并禁用 backports / 第三方源
   ✅ 兼容 UEFI / BIOS，支持 NVMe、virtio、xen 磁盘
   ✅ 备份并核对网络接口，不自动改名或重启网络
@@ -929,7 +1164,7 @@ show_help() {
 🔄 升级路径:
   Debian 11 (Bullseye) → 12 (Bookworm) → 13 (Trixie) [当前稳定版]
                          → 14 (Forky)    [testing，需 --allow-testing]
-    Ubuntu 20.04 (Focal) → 22.04 (Jammy) → 24.04 (Noble) → 26.04 (Plucky)
+    Ubuntu 20.04 (Focal) → 22.04 (Jammy) → 24.04 (Noble) → 26.04 (Resolute)
   Debian 8-10 的历史脚本仅供迁移研究，不属于当前生产支持范围
 
 💻 示例:
@@ -938,6 +1173,8 @@ show_help() {
   $0 --preflight               # 检查 initramfs、动态库和 dpkg 状态
   $0 --mirror cn               # 使用阿里云源升级（推荐国内）
   $0 --stable-only             # 仅升级到稳定版（默认行为）
+  $0 --require-confirm         # 稳定版也要求人工确认
+  $0 --auto-reboot             # 升级成功后自动重启
   $0 --allow-testing           # 升级到 Debian 14 Forky（testing）
   $0 --allow-testing --force   # 强制升级到 Forky，跳过确认
   $0 --fix-grub                # 修复引导问题
@@ -946,8 +1183,9 @@ show_help() {
   $0 --debug                   # 调试模式
 
 ⚠️  注意:
-  • VPS 用户请确保有 VNC / 控制台访问权限
+  • VPS 用户请确保有 VNC / 串口 / 控制台访问权限
   • 升级前请创建系统快照或数据备份
+  • 极低内存或磁盘不足的 NAT VPS 会在切换软件源前停止
   • Debian 13 (Trixie) 为当前推荐稳定版，支持至 2030 年
   • Debian 14 (Forky) 处于 testing，不建议生产环境使用
     • Ubuntu 仅支持 LTS 相邻升级，不执行跨代跳级
@@ -1142,6 +1380,27 @@ check_upgrade_ubuntu() {
     echo "═══════════════════════════════════════════"
 }
 
+confirm_stable_upgrade() {
+    local distro="$1"
+    local current="$2"
+    local target="$3"
+    local target_name="$4"
+
+    if [[ "${REQUIRE_CONFIRM:-0}" == "1" && "${FORCE:-0}" != "1" ]]; then
+        if [[ -e /dev/tty ]]; then
+            read -p "确认升级到 ${distro} ${target} (${target_name})？[y/N]: " -n 1 -r </dev/tty; echo
+        else
+            log_warning "无交互终端，默认取消（取消 --require-confirm 或使用 --force 可跳过确认）"
+            REPLY=""
+        fi
+        [[ ! $REPLY =~ ^[Yy]$ ]] && { log_info "已取消"; exit 0; }
+        return
+    fi
+
+    log_info "稳定版相邻升级默认自动继续: ${distro} ${current} → ${target} (${target_name})"
+    log_info "如需恢复人工确认，可使用 --require-confirm"
+}
+
 # ── 主升级流程 ────────────────────────────────────────────────────────────────
 main_upgrade() {
     local cur cur_info cur_name cur_stat nxt nxt_info nxt_name nxt_stat
@@ -1189,7 +1448,7 @@ main_upgrade() {
 
     log_info "目标: Debian $nxt ($nxt_name) [$nxt_stat]"
 
-    # 非稳定版本需额外确认
+    # 稳定版相邻升级默认自动继续；非稳定版本仍需额外确认。
     if [[ "$nxt_stat" =~ testing|unstable ]]; then
         echo
         log_warning "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1200,15 +1459,7 @@ main_upgrade() {
                 || { log_info "已取消"; exit 0; }
         fi
     else
-        if [[ "${FORCE:-0}" != "1" ]]; then
-            if [[ -e /dev/tty ]]; then
-                read -p "确认升级到 Debian $nxt ($nxt_name)？[y/N]: " -n 1 -r </dev/tty; echo
-            else
-                log_warning "无交互终端，默认取消（使用 --force 跳过确认）"
-                REPLY=""
-            fi
-            [[ ! $REPLY =~ ^[Yy]$ ]] && { log_info "已取消"; exit 0; }
-        fi
+        confirm_stable_upgrade "Debian" "$cur" "$nxt" "$nxt_name"
     fi
 
     # 备份网络配置
@@ -1216,7 +1467,7 @@ main_upgrade() {
     backup_dir=$(save_network_config)
 
     # 升级前准备（含清理无效源）
-    pre_upgrade_preparation "$nxt_name"
+    pre_upgrade_preparation "$nxt_name" "debian"
 
     # ── 步骤 1：写入新 sources.list ──────────────────────────────────────────
     log_info "步骤 1/4: 更新软件源配置 → $nxt_name"
@@ -1244,62 +1495,7 @@ EOF
 
     # ── 步骤 2：更新包列表 ────────────────────────────────────────────────────
     log_info "步骤 2/4: 更新软件包列表"
-    # 允许部分失败（如残留第三方源），继续升级
-    mkdir -p "$RUN_DIR"
-    $USE_SUDO apt-get -o Acquire::Languages=none update 2>&1 | tee "$APT_UPDATE_LOG" || {
-        log_warning "apt-get update 出现错误（见上），检查是否可继续..."
-
-        # GPG 签名验证错误优先处理 — 必须在 404 检查之前，否则同时存在两种错误时
-        # GPG 恢复路径不可达（404 分支先匹配且重试失败后直接 exit）
-        if grep -q "NO_PUBKEY\|GPG error\|is not signed" "$APT_UPDATE_LOG"; then
-            log_warning "检测到 GPG 签名验证错误，尝试安装目标版本密钥环..."
-            # 临时为所有源添加 [trusted=yes] 跳过签名验证
-            $USE_SUDO sed -i 's/^deb /deb [trusted=yes] /' /etc/apt/sources.list
-            $USE_SUDO apt-get -o Acquire::Languages=none update 2>/dev/null || {
-                log_error "即使跳过签名验证，软件包列表更新仍然失败"
-                $USE_SUDO sed -i 's/^deb \[trusted=yes\] /deb /' /etc/apt/sources.list
-                exit 1
-            }
-            # 安装新版本的归档密钥环
-            DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get install -y \
-                debian-archive-keyring 2>/dev/null || true
-            # 移除 [trusted=yes]，恢复正常的签名验证
-            $USE_SUDO sed -i 's/^deb \[trusted=yes\] /deb /' /etc/apt/sources.list
-            # 再次更新（可能仍有 404，继续处理）
-            if $USE_SUDO apt-get -o Acquire::Languages=none update; then
-                log_success "密钥环已更新，签名验证恢复正常"
-            else
-                log_warning "签名验证已恢复，但更新仍有错误（见上），尝试清理 404..."
-                find /etc/apt/sources.list.d/ -maxdepth 1 -type f \
-                    \( -name "*.list" -o -name "*.sources" \) 2>/dev/null \
-                    | while read -r f; do
-                        log_warning "  禁用: $f"
-                        $USE_SUDO mv "$f" "${f}.disabled-by-debian-upgrade" 2>/dev/null || true
-                    done
-                $USE_SUDO apt-get -o Acquire::Languages=none update || {
-                    log_error "软件包列表更新失败，请检查网络或手动修复源配置"
-                    exit 1
-                }
-            fi
-        # 如果是 Release 文件不存在（404），属于已清理源的残留，可忽略
-        elif grep -q "404\|Release.*does not have" "$APT_UPDATE_LOG"; then
-            log_warning "检测到 404 错误，尝试再次清理无效源后重试"
-            # 禁用所有 sources.list.d 中的第三方源
-            find /etc/apt/sources.list.d/ -maxdepth 1 -type f \
-                \( -name "*.list" -o -name "*.sources" \) 2>/dev/null \
-                | while read -r f; do
-                    log_warning "  禁用: $f"
-                    $USE_SUDO mv "$f" "${f}.disabled-by-debian-upgrade" 2>/dev/null || true
-                done
-            $USE_SUDO apt-get -o Acquire::Languages=none update || {
-                log_error "软件包列表更新失败，请检查网络或手动修复源配置"
-                exit 1
-            }
-        else
-            log_error "软件包列表更新失败"
-            exit 1
-        fi
-    }
+    apt_update_with_recovery "debian-archive-keyring" || exit 1
 
     # ── 步骤 3：执行升级 ──────────────────────────────────────────────────────
     log_info "步骤 3/4: 执行系统升级"
@@ -1350,23 +1546,10 @@ EOF
         fi
 
         echo
-        if [[ "${FORCE:-0}" != "1" ]]; then
-            if [[ -e /dev/tty ]]; then
-                read -p "是否需要 GRUB 修复？（通常无需）[y/N]: " -n 1 -r </dev/tty; echo
-            else
-                log_info "无交互终端，跳过 GRUB 修复询问"
-                REPLY=""
-            fi
-            [[ $REPLY =~ ^[Yy]$ ]] && fix_grub_quick
-
-            if [[ -e /dev/tty ]]; then
-                read -p "是否现在重启系统？[y/N]: " -n 1 -r </dev/tty; echo
-            else
-                log_info "无交互终端，请稍后手动重启"
-                REPLY=""
-            fi
-            [[ $REPLY =~ ^[Yy]$ ]] && safe_reboot \
-                || log_info "请稍后手动重启: sudo reboot"
+        if [[ "${AUTO_REBOOT:-0}" == "1" ]]; then
+            safe_reboot
+        else
+            log_info "未启用 --auto-reboot，请在维护窗口内手动重启: sudo reboot"
         fi
     else
         log_error "升级验证失败！期望: $nxt，检测到: $new_ver"
@@ -1408,28 +1591,12 @@ ubuntu_upgrade() {
     local nxt_codename="${UBUNTU_CODENAME[$nxt_version]}"
     log_info "目标: Ubuntu $nxt_version ($nxt_codename)"
 
-    # 用户确认
-    if [[ "${FORCE:-0}" != "1" ]]; then
-        if [[ -e /dev/tty ]]; then
-            read -p "确认升级到 Ubuntu $nxt_version ($nxt_codename)？[y/N]: " -n 1 -r </dev/tty; echo
-        else
-            log_warning "无交互终端，默认取消（使用 --force 跳过确认）"
-            REPLY=""
-        fi
-        [[ ! $REPLY =~ ^[Yy]$ ]] && { log_info "已取消"; exit 0; }
-    fi
+    confirm_stable_upgrade "Ubuntu" "$version_id" "$nxt_version" "$nxt_codename"
 
-    # 升级前准备：锁等待、预检、依赖修复、禁用附加源
+    # 升级前准备：资源门槛、锁等待、预检、依赖修复、禁用附加源
     local backup_dir
     backup_dir=$(save_network_config)
-    stop_apt_units
-    wait_for_apt_locks
-    check_runtime_injection
-    check_initramfs_health
-    $USE_SUDO dpkg --audit 2>/dev/null || true
-    $USE_SUDO dpkg --configure -a 2>/dev/null || true
-    DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get --fix-broken install -y 2>/dev/null || true
-    clean_apt_sources "$nxt_codename"
+    pre_upgrade_preparation "$nxt_codename" "ubuntu"
 
     # 确定 Ubuntu 镜像源
     local ubuntu_mirror_info ubuntu_mirror ubuntu_security
@@ -1454,11 +1621,7 @@ EOF
 
     # ── 步骤 2: 更新包列表 ────────────────────────────────────────────────────
     log_info "步骤 2/4: 更新软件包列表"
-    mkdir -p "$RUN_DIR"
-    if ! $USE_SUDO apt-get -o Acquire::Languages=none update 2>&1 | tee "$APT_UPDATE_LOG"; then
-        log_error "软件包列表更新失败，请检查网络或镜像源配置"
-        exit 1
-    fi
+    apt_update_with_recovery "ubuntu-keyring" || exit 1
 
     # ── 步骤 3: 执行升级 ──────────────────────────────────────────────────────
     log_info "步骤 3/4: 执行系统升级"
@@ -1481,8 +1644,9 @@ EOF
         exit 1
     fi
 
-    # ── 步骤 4: 验证升级结果 ──────────────────────────────────────────────────
-    log_info "步骤 4/4: 验证升级结果"
+    # ── 步骤 4: 升级后修复与验证 ──────────────────────────────────────────────
+    log_info "步骤 4/4: 升级后修复与验证"
+    post_upgrade_fixes "$backup_dir"
     sleep 2
     local new_ver
     new_ver=$(grep "^VERSION_ID=" /etc/os-release 2>/dev/null | cut -d'"' -f2 | tr -d '[:space:]')
@@ -1502,15 +1666,10 @@ EOF
         fi
 
         echo
-        if [[ "${FORCE:-0}" != "1" ]]; then
-            if [[ -e /dev/tty ]]; then
-                read -p "是否现在重启系统？[y/N]: " -n 1 -r </dev/tty; echo
-            else
-                log_info "无交互终端，请稍后手动重启"
-                REPLY=""
-            fi
-            [[ $REPLY =~ ^[Yy]$ ]] && safe_reboot \
-                || log_info "请稍后手动重启: sudo reboot"
+        if [[ "${AUTO_REBOOT:-0}" == "1" ]]; then
+            safe_reboot
+        else
+            log_info "未启用 --auto-reboot，请在维护窗口内手动重启: sudo reboot"
         fi
     else
         log_error "升级验证失败！期望: $nxt_version，检测到: $new_ver"
@@ -1882,6 +2041,7 @@ self_update_mode() {
 preflight_mode() {
     log_info "执行升级前深度检查（不会切换软件源或升级软件包）..."
     wait_for_apt_locks
+    check_upgrade_capacity
     check_runtime_injection
     check_initramfs_health
 
@@ -1906,6 +2066,7 @@ error_recovery() {
 
 # ── 清理退出 ──────────────────────────────────────────────────────────────────
 cleanup() {
+    cleanup_temporary_swap
     if [[ "$KEEP_RUN_DIR" == "1" ]]; then
         log_warning "诊断日志已保留: $RUN_DIR"
     else
@@ -1945,7 +2106,9 @@ main() {
             -d|--debug)   export DEBUG=1; log_debug "调试模式已启用"; shift ;;
             --fix-only)   check_root; check_system; fix_only_mode; exit 0 ;;
             --fix-grub)   check_root; fix_grub_mode; exit 0 ;;
-            --force)      export FORCE=1; log_warning "强制模式：跳过所有确认"; shift ;;
+            --force)      export FORCE=1; log_warning "强制模式：跳过强制确认"; shift ;;
+            --require-confirm) export REQUIRE_CONFIRM=1; shift ;;
+            --auto-reboot) export AUTO_REBOOT=1; shift ;;
             --stable-only)  export STABLE_ONLY=1; shift ;;
             --allow-testing) export STABLE_ONLY=0; shift ;;
             --mirror)
