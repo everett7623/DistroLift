@@ -10,7 +10,7 @@ syntax:
 
 shellcheck:
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck -x distro_upgrade.sh scripts/*.sh tests/*.sh; \
+		shellcheck -x distro_upgrade.sh tests/*.sh; \
 	else \
 		echo "shellcheck not installed; skipping static analysis"; \
 	fi

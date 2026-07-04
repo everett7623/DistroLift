@@ -136,7 +136,6 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
 NC='\033[0m'
 
 # ── 日志函数 ──────────────────────────────────────────────────────────────────
@@ -487,7 +486,8 @@ get_current_version() {
 
 # ── 网络配置备份 ──────────────────────────────────────────────────────────────
 save_network_config() {
-    local backup_dir="/root/debian_upgrade_backup_$(date +%Y%m%d_%H%M%S)"
+    local backup_dir
+    backup_dir="/root/debian_upgrade_backup_$(date +%Y%m%d_%H%M%S)"
     log_debug "备份网络配置到 $backup_dir"
     $USE_SUDO mkdir -p "$backup_dir/network"
     $USE_SUDO cp -a /etc/network/interfaces* "$backup_dir/network/" 2>/dev/null || true
@@ -518,7 +518,8 @@ fix_network_config() {
 get_old_kernels() {
     local cur_k latest_k
     cur_k=$(uname -r)
-    latest_k=$(ls -t /boot/vmlinuz-* 2>/dev/null | head -1 | sed 's|/boot/vmlinuz-||')
+    latest_k=$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf '%T@ %f\n' 2>/dev/null \
+        | sort -nr | awk 'NR==1{sub(/^vmlinuz-/,"",$2); print $2}')
 
     local result=""
     while read -r pkg; do
@@ -541,7 +542,8 @@ clean_old_kernels() {
     log_info "清理旧内核以释放 /boot 空间..."
     local cur_k latest_k
     cur_k=$(uname -r)
-    latest_k=$(ls -t /boot/vmlinuz-* 2>/dev/null | head -1 | sed 's|/boot/vmlinuz-||')
+    latest_k=$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf '%T@ %f\n' 2>/dev/null \
+        | sort -nr | awk 'NR==1{sub(/^vmlinuz-/,"",$2); print $2}')
     log_info "当前内核: $cur_k | 最新内核: ${latest_k:-未知}"
 
     local to_remove
@@ -715,7 +717,8 @@ clean_apt_sources() {
     log_info "备份并暂时禁用附加 APT 源（目标代号: $target_codename）..."
 
     if [[ -d /etc/apt/sources.list.d ]]; then
-        local bak_dir="/etc/apt/sources.list.d.bak_$(date +%s)"
+        local bak_dir
+        bak_dir="/etc/apt/sources.list.d.bak_$(date +%s)"
         $USE_SUDO cp -a /etc/apt/sources.list.d "$bak_dir"
         log_info "已备份 sources.list.d/ 到 $bak_dir"
 
@@ -1068,7 +1071,8 @@ post_upgrade_fixes() {
 
     # APT 的内核触发器通常已经生成 initramfs；仅在最新内核缺失时补建。
     local latest_kernel=""
-    latest_kernel=$(ls -t /boot/vmlinuz-* 2>/dev/null | head -1 | sed 's|/boot/vmlinuz-||')
+    latest_kernel=$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf '%T@ %f\n' 2>/dev/null \
+        | sort -nr | awk 'NR==1{sub(/^vmlinuz-/,"",$2); print $2}')
     if [[ -n "$latest_kernel" ]]; then
         if [[ -s "/boot/initrd.img-$latest_kernel" ]]; then
             log_info "最新内核 initramfs 已存在，跳过重复重建: $latest_kernel"
@@ -1656,7 +1660,7 @@ EOF
         if [[ -n "$further" ]]; then
             local further_info
             further_info=$(get_version_info "$further")
-            log_info "🚀 后续可继续升级到 Debian $further ($(echo $further_info | cut -d'|' -f1))"
+            log_info "🚀 后续可继续升级到 Debian $further ($(echo "$further_info" | cut -d'|' -f1))"
         fi
 
         echo
@@ -1875,7 +1879,7 @@ fix_grub_mode() {
         return 0
     fi
 
-    local boot_mode boot_disk grub_target
+    local boot_mode boot_disk
     boot_mode=$(detect_boot_mode)
     boot_disk=$(detect_boot_disk)
 
