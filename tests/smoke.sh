@@ -77,6 +77,7 @@ grep -q 'MIN_PHYSICAL_MEM_MB' "$SCRIPT" || fail "missing low-memory resource gat
 grep -q 'prepare_temporary_swap' "$SCRIPT" || fail "missing temporary swap helper"
 grep -q 'REQUIRE_CONFIRM' "$SCRIPT" || fail "missing stable upgrade confirmation override"
 grep -q 'show_startup_risk_banner' "$SCRIPT" || fail "missing startup risk banner"
+grep -q 'show_project_intro_banner "预检模式"' "$SCRIPT" || fail "preflight should show intro banner"
 STARTUP_RISK_CONFIRMED=0
 FORCE=1 show_startup_risk_banner "Debian" "12" "13" "trixie" >/dev/null 2>&1
 [[ "$STARTUP_RISK_CONFIRMED" == "1" ]] || fail "force mode should acknowledge startup risk"

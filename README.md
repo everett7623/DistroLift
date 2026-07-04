@@ -8,12 +8,12 @@
 [![Debian](https://img.shields.io/badge/Debian-11--13-red.svg)](https://www.debian.org/)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-LTS-orange.svg)](https://ubuntu.com/)
 [![Bash](https://img.shields.io/badge/Language-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Version](https://img.shields.io/badge/Version-3.7.1-brightgreen.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
+[![Version](https://img.shields.io/badge/Version-3.7.2-brightgreen.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
 ![Visitors](https://visitor-badge.laobi.icu/badge?page_id=everett7623.debian-auto-upgrade)
 
 **DistroLift Auto Upgrade** 是面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS / NAT VPS 环境深度优化，具备完善的错误恢复与容错能力。
 
-> ⚠️ 首次进入真实升级前，脚本会显示风险确认页。请先创建整机快照、单独备份业务数据，并准备云厂商控制台、VNC 或串口控制台。
+> ⚠️ 运行 `--preflight` 会先显示 DistroLift 欢迎页和风险提示；首次进入真实升级前还会要求输入 `YES` 确认。请先创建整机快照、单独备份业务数据，并准备云厂商控制台、VNC 或串口控制台。
 
 ## ✨ 功能特性
 
@@ -57,9 +57,7 @@
 ```bash
 rm -f distro_upgrade.sh
 
-wget -4 -T 20 -t 2 -O distro_upgrade.sh \
-  https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh \
-|| wget -4 -T 20 -t 2 -O distro_upgrade.sh \
+wget -O distro_upgrade.sh \
   https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh
 
 chmod +x distro_upgrade.sh
@@ -72,10 +70,7 @@ sudo ./distro_upgrade.sh
 ```bash
 rm -f distro_upgrade.sh
 
-curl -4 -fL --connect-timeout 20 --max-time 60 --proto '=https' --tlsv1.2 \
-  -o distro_upgrade.sh \
-  https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh \
-|| curl -4 -fL --connect-timeout 20 --max-time 60 --proto '=https' --tlsv1.2 \
+curl -fL --proto '=https' --tlsv1.2 \
   -o distro_upgrade.sh \
   https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh
 
@@ -83,7 +78,7 @@ chmod +x distro_upgrade.sh
 sudo ./distro_upgrade.sh --check
 ```
 
-> 下载命令默认强制 IPv4，并在 GitHub Raw 不可达时回退 jsDelivr CDN，适合 IPv6 路由不稳定的小 VPS / NAT VPS。下载后建议先核对 GitHub 中的文件内容或发布校验值，不要直接执行来源不明的脚本。
+> 默认使用 jsDelivr CDN，避免很多 VPS 访问 GitHub Raw 时卡在 IPv6。下载后建议先核对 GitHub 中的文件内容或发布校验值，不要直接执行来源不明的脚本。
 
 ### 基本用法
 
@@ -321,14 +316,19 @@ sudo ./distro_upgrade.sh --self-update
 
 ### ❓ wget 卡在 raw.githubusercontent.com Connecting
 
-部分 VPS 会解析到 GitHub Raw 的 IPv6 地址，但实际 IPv6 出站不通，表现为长时间停在 `Connecting to raw.githubusercontent.com ... 2606:...:443`。先按 `Ctrl+C` 停止，再使用 README 顶部的 IPv4 + CDN 回退命令。
+部分 VPS 会解析到 GitHub Raw 的 IPv6 地址，但实际 IPv6 出站不通，表现为长时间停在 `Connecting to raw.githubusercontent.com ... 2606:...:443`。先按 `Ctrl+C` 停止，再使用 README 顶部的 CDN 命令。
 
 如需单独下载，可执行：
 
 ```bash
+wget -O distro_upgrade.sh \
+  https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh
+```
+
+如果 CDN 也卡住，再尝试强制 IPv4：
+
+```bash
 wget -4 -T 20 -t 2 -O distro_upgrade.sh \
-  https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh \
-|| wget -4 -T 20 -t 2 -O distro_upgrade.sh \
   https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh
 ```
 
@@ -479,6 +479,7 @@ systemctl status networking systemd-networkd NetworkManager
 
 | 版本 | 日期 | 主要变更 |
 |------|------|----------|
+| **v3.7.2** | 2026-07-04 | 修复 `--preflight` 入口缺少欢迎页的问题；预检启动时先显示 DistroLift 菜单、能力范围和风险提示 |
 | **v3.7.1** | 2026-07-04 | 项目展示名更新为 DistroLift Auto Upgrade；真实升级前新增集中风险确认页，确认一次后稳定版流程继续自动化 |
 | **v3.7** | 2026-07-04 | 自动化与 VPS 成功率优化：稳定版默认自动继续、低内存资源门槛、临时 Swap、Debian/Ubuntu 共用 apt 恢复、修正 Ubuntu 26.04 Resolute |
 | **v3.6** | 2026-06-10 | VPS 兼容性全面加固：ARM64 架构支持、容器自动识别、非交互终端安全降级、CDN 自更新回退、EFI 多路径检测、GPG 恢复路径修复；关联数组重构、日志拆分等 |

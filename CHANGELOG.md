@@ -8,6 +8,17 @@
 
 - 暂无。
 
+## v3.7.2 - 2026-07-04
+
+### 修复
+
+- 修复 `--preflight` 入口没有显示 DistroLift 欢迎页和风险提示的问题。
+
+### 优化
+
+- 将启动页拆分为“菜单/风险展示”和“真实升级 YES 确认”，预检只展示不阻塞，真实升级继续要求风险确认。
+- README 下载命令改为默认使用 jsDelivr CDN，强制 IPv4 放入 FAQ 排障路径。
+
 ## v3.7.1 - 2026-07-04
 
 ### 新增
@@ -18,7 +29,7 @@
 ### 变更
 
 - 项目展示名称从 Debian / Ubuntu Auto Upgrade Tool 更新为 DistroLift Auto Upgrade，弱化旧 Debian-only 命名。
-- 帮助页、README、AI 工具文档和 Kiro 规格同步新项目名与当前开发进度。
+- 帮助页、README 和 AI 工具文档同步新项目名与当前开发进度。
 
 ## v3.7 - 2026-07-04
 

@@ -52,7 +52,7 @@ cp distro_upgrade.sh README.md CHANGELOG.md docs/*.md tests/smoke.sh "$backup_di
 
 - 更新 `SCRIPT_VERSION`、`SCRIPT_DATE` 和 `CHANGELOG.md`。
 - 核对 README 中的支持矩阵。
-- 同步 AI 工具文档：`AGENTS.md`、`CLAUDE.md`、`.kiro/specs/`，确保版本、入口、支持矩阵、测试状态一致。
+- 同步 AI 工具文档：`AGENTS.md`、`CLAUDE.md`，并同步 `README.md`、`CHANGELOG.md`，确保版本、入口、支持矩阵、测试状态一致。
 - 在 Debian 与 Ubuntu LTS 的 BIOS / UEFI 虚拟机中分别测试。
 - 至少验证官方源和一个镜像源；Ubuntu arm64 / ports 架构需验证 `ubuntu-ports`。
 - 验证低内存场景：可升级配置会创建临时 Swap，过低 NAT VPS 会在切源前停止。

@@ -5,13 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Current Project State
 
 - Project display name: DistroLift Auto Upgrade.
-- Current production script: `distro_upgrade.sh` v3.7.1 (`SCRIPT_DATE=2026-07-04`), about 2210 lines.
+- Current production script: `distro_upgrade.sh` v3.7.2 (`SCRIPT_DATE=2026-07-04`), about 2220 lines.
 - Production scope: Debian 11 -> 12 -> 13 and Ubuntu LTS 20.04 -> 22.04 -> 24.04 -> 26.04.
 - Ubuntu 26.04 codename is `resolute`.
 - Stable adjacent upgrades are automation-first and continue by default; use `--require-confirm` to restore manual confirmation.
 - Debian 13 -> 14 remains gated by `--allow-testing` and requires explicit `YES` confirmation unless forced.
 - `--auto-reboot` is opt-in only. Successful upgrades do not reboot automatically by default.
-- A startup risk confirmation page is shown before real upgrades. It summarizes capabilities, backup requirements, console access requirements, and failure risks. `--force` skips this confirmation for explicit automation.
+- `--preflight` shows the DistroLift intro/risk banner before checks. Real upgrades show the same risk content and require `YES`; `--force` skips this confirmation for explicit automation.
 - Low-memory / NAT VPS handling is part of v3.7: physical memory, swap, root free space, and `/boot` free space are checked before sources are changed. Reasonable low-memory systems may get a temporary swap file that is removed on exit; extremely small systems are rejected before upgrade.
 
 ## Build & Test
@@ -99,7 +99,7 @@ When adding a new Debian or Ubuntu release, update the mapping arrays, `SCRIPT_V
 - Before making a versioned change, back up the files to a local `.codex-backups/vX.Y-<timestamp>/` directory.
 - Keep Debian and Ubuntu LTS behavior aligned where possible. Shared behavior belongs in shared helpers, not duplicate distro-specific branches.
 - Add tests for policy changes in `tests/smoke.sh`.
-- Keep `AGENTS.md`, `CLAUDE.md`, `docs/DEVELOPMENT.md`, `docs/SAFETY.md`, README, CHANGELOG, and Kiro specs aligned when project behavior changes.
+- Keep `AGENTS.md`, `CLAUDE.md`, `docs/DEVELOPMENT.md`, `docs/SAFETY.md`, README, and CHANGELOG aligned when project behavior changes.
 - Do not modify `scripts/` unless the task explicitly concerns legacy historical scripts.
 
 ## Key Files
@@ -114,5 +114,4 @@ When adding a new Debian or Ubuntu release, update the mapping arrays, `SCRIPT_V
 | `CHANGELOG.md` | Version progress and release notes |
 | `docs/DEVELOPMENT.md` | Development workflow, backup rule, and release checklist |
 | `docs/SAFETY.md` | Hard safety boundaries |
-| `.kiro/specs/` | Kiro requirements/design/task progress snapshots |
 | `scripts/` | Legacy historical scripts only |

@@ -69,6 +69,9 @@
 #   v3.7.1 2026-07-04  品牌与启动风险确认
 #                     - 项目展示名更名为 DistroLift Auto Upgrade
 #                     - 真实升级前显示能力、适用范围和风险清单，确认一次后继续自动化流程
+#   v3.7.2 2026-07-04  修复预检入口缺少欢迎页
+#                     - --preflight 启动时先显示项目菜单、能力范围和风险提示
+#                     - 真实升级继续保留 YES 风险确认
 # =============================================================================
 # 使用方法:
 #   chmod +x distro_upgrade.sh
@@ -94,7 +97,7 @@ set -Ee -o pipefail
 # ── 脚本元信息 ────────────────────────────────────────────────────────────────
 PROJECT_NAME="DistroLift Auto Upgrade"
 PROJECT_SUBTITLE="Debian / Ubuntu LTS 自动逐级升级工具"
-SCRIPT_VERSION="3.7.1"
+SCRIPT_VERSION="3.7.2"
 SCRIPT_NAME="distro_upgrade.sh"
 SCRIPT_DATE="2026-07-04"
 SCRIPT_REPO="https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh"
@@ -111,6 +114,7 @@ STOPPED_APT_UNITS=()
 TEMP_SWAP_FILE=""
 TEMP_SWAP_CREATED=0
 STARTUP_RISK_CONFIRMED=0
+INTRO_BANNER_SHOWN=0
 
 # ── VPS 资源门槛 ──────────────────────────────────────────────────────────────
 MIN_ROOT_FREE_MB="${MIN_ROOT_FREE_MB:-2048}"
@@ -1130,33 +1134,20 @@ safe_reboot() {
     fi
 }
 
-show_startup_risk_banner() {
-    local distro="$1"
-    local current="$2"
-    local target="$3"
-    local target_name="$4"
+show_project_intro_banner() {
+    local mode="$1"
+    local plan="$2"
 
-    [[ "$STARTUP_RISK_CONFIRMED" == "1" ]] && return 0
+    [[ "$INTRO_BANNER_SHOWN" == "1" ]] && return 0
 
-    if [[ "${FORCE:-0}" == "1" ]]; then
-        log_warning "强制模式已跳过启动风险确认；请确认快照、备份和控制台访问已准备好"
-        STARTUP_RISK_CONFIRMED=1
-        return 0
-    fi
-
-    if [[ ! -e /dev/tty ]]; then
-        log_error "无交互终端，无法完成启动风险确认"
-        log_error "如已确认快照、业务备份和控制台可用，可在自动化任务中显式使用 --force"
-        exit 1
-    fi
-
-    cat >/dev/tty << EOF
+    cat >&2 << EOF
 
 ╔════════════════════════════════════════════════════════════════════╗
 ║                    ${PROJECT_NAME}                    ║
 ║              ${PROJECT_SUBTITLE}              ║
 ╠════════════════════════════════════════════════════════════════════╣
-║ 本次计划: ${distro} ${current}  →  ${target} (${target_name})
+║ 当前模式: ${mode}
+║ 执行计划: ${plan}
 ║
 ║ 可以做什么:
 ║   • 自动执行相邻发行版升级，不跨代跳级
@@ -1173,10 +1164,35 @@ show_startup_risk_banner() {
 ║   4. 已确认第三方软件支持目标系统版本
 ║   5. 接受升级期间服务中断、网络失联、无法启动等风险
 ║
-║ 通过此确认后，稳定版升级将尽量自动完成，不再反复打断。
+║ 提示: 预检只检查系统，不切换软件源；真实升级会要求输入 YES。
 ╚════════════════════════════════════════════════════════════════════╝
 
 EOF
+
+    INTRO_BANNER_SHOWN=1
+}
+
+show_startup_risk_banner() {
+    local distro="$1"
+    local current="$2"
+    local target="$3"
+    local target_name="$4"
+
+    [[ "$STARTUP_RISK_CONFIRMED" == "1" ]] && return 0
+
+    show_project_intro_banner "升级确认" "${distro} ${current} -> ${target} (${target_name})"
+
+    if [[ "${FORCE:-0}" == "1" ]]; then
+        log_warning "强制模式已跳过启动风险确认；请确认快照、备份和控制台访问已准备好"
+        STARTUP_RISK_CONFIRMED=1
+        return 0
+    fi
+
+    if [[ ! -e /dev/tty ]]; then
+        log_error "无交互终端，无法完成启动风险确认"
+        log_error "如已确认快照、业务备份和控制台可用，可在自动化任务中显式使用 --force"
+        exit 1
+    fi
 
     read -r -p "输入 YES 表示已理解风险并继续升级，直接回车取消: " REPLY </dev/tty
     if [[ "$REPLY" != "YES" ]]; then
@@ -2167,7 +2183,13 @@ main() {
                 fi
                 exit 0 ;;
             -c|--check)   check_upgrade; exit 0 ;;
-            --preflight)  check_root; check_system; preflight_mode; exit 0 ;;
+            --preflight)
+                check_root
+                show_project_intro_banner "预检模式" "仅检查资源、锁、dpkg、initramfs 和运行时风险，不切换软件源"
+                check_system
+                preflight_mode
+                exit 0
+                ;;
             --cleanup)    check_root; check_system; cleanup_mode; exit 0 ;;
             --self-update) self_update_mode; exit 0 ;;
             -d|--debug)   export DEBUG=1; log_debug "调试模式已启用"; shift ;;
