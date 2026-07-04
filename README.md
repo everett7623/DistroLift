@@ -55,23 +55,35 @@
 ### 一键安装运行
 
 ```bash
-wget -O distro_upgrade.sh https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh \
-  && chmod +x distro_upgrade.sh \
-  && sudo ./distro_upgrade.sh --preflight \
-  && sudo ./distro_upgrade.sh
+rm -f distro_upgrade.sh
+
+wget -4 -T 20 -t 2 -O distro_upgrade.sh \
+  https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh \
+|| wget -4 -T 20 -t 2 -O distro_upgrade.sh \
+  https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh
+
+chmod +x distro_upgrade.sh
+sudo ./distro_upgrade.sh --preflight
+sudo ./distro_upgrade.sh
 ```
 
 也可以使用带 HTTPS 限制的 `curl` 下载：
 
 ```bash
-curl -fL --proto '=https' --tlsv1.2 \
+rm -f distro_upgrade.sh
+
+curl -4 -fL --connect-timeout 20 --max-time 60 --proto '=https' --tlsv1.2 \
   -o distro_upgrade.sh \
-  https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh
+  https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh \
+|| curl -4 -fL --connect-timeout 20 --max-time 60 --proto '=https' --tlsv1.2 \
+  -o distro_upgrade.sh \
+  https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh
+
 chmod +x distro_upgrade.sh
 sudo ./distro_upgrade.sh --check
 ```
 
-> 下载后建议先核对 GitHub 中的文件内容或发布校验值，不要直接执行来源不明的脚本。
+> 下载命令默认强制 IPv4，并在 GitHub Raw 不可达时回退 jsDelivr CDN，适合 IPv6 路由不稳定的小 VPS / NAT VPS。下载后建议先核对 GitHub 中的文件内容或发布校验值，不要直接执行来源不明的脚本。
 
 ### 基本用法
 
@@ -306,6 +318,19 @@ sudo ./distro_upgrade.sh --self-update
 `--auto-reboot` 仅适合已确认控制台、快照和维护窗口的场景。
 
 ## 🐛 常见问题
+
+### ❓ wget 卡在 raw.githubusercontent.com Connecting
+
+部分 VPS 会解析到 GitHub Raw 的 IPv6 地址，但实际 IPv6 出站不通，表现为长时间停在 `Connecting to raw.githubusercontent.com ... 2606:...:443`。先按 `Ctrl+C` 停止，再使用 README 顶部的 IPv4 + CDN 回退命令。
+
+如需单独下载，可执行：
+
+```bash
+wget -4 -T 20 -t 2 -O distro_upgrade.sh \
+  https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh \
+|| wget -4 -T 20 -t 2 -O distro_upgrade.sh \
+  https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh
+```
 
 ### ❓ apt-get update 报 404 或缺少 Release 文件
 
