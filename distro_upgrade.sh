@@ -69,17 +69,18 @@
 #   v3.7.1 2026-07-04  品牌与启动风险确认
 #                     - 项目展示名更名为 DistroLift Auto Upgrade
 #                     - 真实升级前显示能力、适用范围和风险清单，确认一次后继续自动化流程
-#   v3.7.2 2026-07-04  修复预检入口缺少欢迎页
-#                     - --preflight 启动时先显示项目菜单、能力范围和风险提示
-#                     - 真实升级继续保留 YES 风险确认
+#   v3.7.2 2026-07-04  调整启动风险页结构
+#                     - 将项目菜单与真实升级确认拆分，真实升级继续保留 YES 风险确认
+#   v3.7.3 2026-07-04  简化默认入口体验
+#                     - --preflight 保持安静预检，不显示欢迎页和风险确认
+#                     - README 推荐 sudo bash distro_upgrade.sh 方式运行
 # =============================================================================
 # 使用方法:
-#   chmod +x distro_upgrade.sh
-#   sudo ./distro_upgrade.sh              # 正常升级（稳定版，默认）
-#   sudo ./distro_upgrade.sh --allow-testing  # 允许升级到 Debian 14 Forky
-#   sudo ./distro_upgrade.sh --check      # 检查升级状态
-#   sudo ./distro_upgrade.sh --fix-grub   # 专门修复 GRUB
-#   sudo ./distro_upgrade.sh --help       # 查看完整帮助
+#   sudo bash distro_upgrade.sh              # 正常升级（稳定版，默认）
+#   sudo bash distro_upgrade.sh --allow-testing  # 允许升级到 Debian 14 Forky
+#   sudo bash distro_upgrade.sh --check      # 检查升级状态
+#   sudo bash distro_upgrade.sh --fix-grub   # 专门修复 GRUB
+#   sudo bash distro_upgrade.sh --help       # 查看完整帮助
 # =============================================================================
 # 注意事项:
 #   - 需要 root 或 sudo 权限
@@ -97,7 +98,7 @@ set -Ee -o pipefail
 # ── 脚本元信息 ────────────────────────────────────────────────────────────────
 PROJECT_NAME="DistroLift Auto Upgrade"
 PROJECT_SUBTITLE="Debian / Ubuntu LTS 自动逐级升级工具"
-SCRIPT_VERSION="3.7.2"
+SCRIPT_VERSION="3.7.3"
 SCRIPT_NAME="distro_upgrade.sh"
 SCRIPT_DATE="2026-07-04"
 SCRIPT_REPO="https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh"
@@ -1146,16 +1147,26 @@ show_project_intro_banner() {
 ║                    ${PROJECT_NAME}                    ║
 ║              ${PROJECT_SUBTITLE}              ║
 ╠════════════════════════════════════════════════════════════════════╣
+║ 脚本信息:
+║   • 版本: v${SCRIPT_VERSION} (${SCRIPT_DATE})
+║   • 项目: https://github.com/everett7623/debian-auto-upgrade
+║   • 支持: Debian 11/12/13，Ubuntu LTS 20.04/22.04/24.04/26.04
+║   • 目标: 自动、稳妥、逐级完成主流 VPS 系统升级
+║
 ║ 当前模式: ${mode}
 ║ 执行计划: ${plan}
 ║
-║ 可以做什么:
+║ 用途:
 ║   • 自动执行相邻发行版升级，不跨代跳级
 ║   • 升级前备份并禁用第三方 APT 源 / backports
 ║   • 等待 APT 锁，预检 dpkg、initramfs、异常动态库注入
 ║   • 低内存 VPS 自动评估资源，合理时创建临时 Swap
 ║   • 升级失败保留日志，不反复重试同一故障
 ║   • 常规路径只刷新 GRUB 配置，不写入 MBR
+║
+║ 项目推广:
+║   • 如果脚本帮你省时间，欢迎在 GitHub 点 Star
+║   • 建议保存 README 地址，升级失败时按日志和文档排查
 ║
 ║ 你必须先确认:
 ║   1. 已创建整机快照或云盘快照
@@ -1164,7 +1175,9 @@ show_project_intro_banner() {
 ║   4. 已确认第三方软件支持目标系统版本
 ║   5. 接受升级期间服务中断、网络失联、无法启动等风险
 ║
-║ 提示: 预检只检查系统，不切换软件源；真实升级会要求输入 YES。
+║ 确认后策略:
+║   • 稳定版相邻升级尽量自动完成，后续减少交互
+║   • 如只想先检查，可退出后运行: sudo bash distro_upgrade.sh --preflight
 ╚════════════════════════════════════════════════════════════════════╝
 
 EOF
@@ -2185,7 +2198,6 @@ main() {
             -c|--check)   check_upgrade; exit 0 ;;
             --preflight)
                 check_root
-                show_project_intro_banner "预检模式" "仅检查资源、锁、dpkg、initramfs 和运行时风险，不切换软件源"
                 check_system
                 preflight_mode
                 exit 0

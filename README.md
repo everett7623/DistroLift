@@ -8,12 +8,12 @@
 [![Debian](https://img.shields.io/badge/Debian-11--13-red.svg)](https://www.debian.org/)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-LTS-orange.svg)](https://ubuntu.com/)
 [![Bash](https://img.shields.io/badge/Language-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Version](https://img.shields.io/badge/Version-3.7.2-brightgreen.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
+[![Version](https://img.shields.io/badge/Version-3.7.3-brightgreen.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
 ![Visitors](https://visitor-badge.laobi.icu/badge?page_id=everett7623.debian-auto-upgrade)
 
 **DistroLift Auto Upgrade** 是面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS / NAT VPS 环境深度优化，具备完善的错误恢复与容错能力。
 
-> ⚠️ 运行 `--preflight` 会先显示 DistroLift 欢迎页和风险提示；首次进入真实升级前还会要求输入 `YES` 确认。请先创建整机快照、单独备份业务数据，并准备云厂商控制台、VNC 或串口控制台。
+> ⚠️ 默认执行升级时会先在 SSH 中显示 DistroLift 脚本信息、用途、项目提示和风险清单，并要求输入 `YES` 确认。确认后稳定版升级会尽量自动完成，减少后续交互。请先创建整机快照、单独备份业务数据，并准备云厂商控制台、VNC 或串口控制台。
 
 ## ✨ 功能特性
 
@@ -60,9 +60,7 @@ rm -f distro_upgrade.sh
 wget -O distro_upgrade.sh \
   https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh
 
-chmod +x distro_upgrade.sh
-sudo ./distro_upgrade.sh --preflight
-sudo ./distro_upgrade.sh
+sudo bash distro_upgrade.sh
 ```
 
 也可以使用带 HTTPS 限制的 `curl` 下载：
@@ -74,8 +72,7 @@ curl -fL --proto '=https' --tlsv1.2 \
   -o distro_upgrade.sh \
   https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh
 
-chmod +x distro_upgrade.sh
-sudo ./distro_upgrade.sh --check
+sudo bash distro_upgrade.sh
 ```
 
 > 默认使用 jsDelivr CDN，避免很多 VPS 访问 GitHub Raw 时卡在 IPv6。下载后建议先核对 GitHub 中的文件内容或发布校验值，不要直接执行来源不明的脚本。
@@ -84,22 +81,22 @@ sudo ./distro_upgrade.sh --check
 
 ```bash
 # 检查当前版本与可用升级
-sudo ./distro_upgrade.sh --check
+sudo bash distro_upgrade.sh --check
 
 # 深度检查 initramfs、动态库和 dpkg 状态，不切换软件源
-sudo ./distro_upgrade.sh --preflight
+sudo bash distro_upgrade.sh --preflight
 
 # 升级到最新稳定版（推荐）
-sudo ./distro_upgrade.sh
+sudo bash distro_upgrade.sh
 
 # 使用国内镜像源升级（国内 VPS 推荐）
-sudo ./distro_upgrade.sh --mirror cn
+sudo bash distro_upgrade.sh --mirror cn
 
 # 查看当前版本
-sudo ./distro_upgrade.sh --version
+sudo bash distro_upgrade.sh --version
 
 # 查看帮助
-sudo ./distro_upgrade.sh --help
+sudo bash distro_upgrade.sh --help
 ```
 
 兼容性说明：仓库保留 `debian_upgrade.sh` 兼容入口，会自动转发到 `distro_upgrade.sh`。
@@ -130,49 +127,49 @@ sudo ./distro_upgrade.sh --help
 
 ```bash
 # 检查状态，不执行升级
-sudo ./distro_upgrade.sh --check
+sudo bash distro_upgrade.sh --check
 
-# 深度预检通过后再升级
-sudo ./distro_upgrade.sh --preflight
+# 可选：深度预检通过后再升级
+sudo bash distro_upgrade.sh --preflight
 
 # 升级到 Debian 13 Trixie（当前稳定版）
-sudo ./distro_upgrade.sh --stable-only
+sudo bash distro_upgrade.sh --stable-only
 
 # 国内服务器使用阿里云源
-sudo ./distro_upgrade.sh --mirror cn
+sudo bash distro_upgrade.sh --mirror cn
 ```
 
 ### 开发 / 测试环境
 
 ```bash
 # 允许升级到 Forky 测试版（需手动输入 YES 确认）
-sudo ./distro_upgrade.sh --allow-testing
+sudo bash distro_upgrade.sh --allow-testing
 
 # 自动化场景强制升级（极度谨慎）
-sudo ./distro_upgrade.sh --force --stable-only
+sudo bash distro_upgrade.sh --force --stable-only
 
 # 调试模式排查问题
-sudo ./distro_upgrade.sh --debug --check
+sudo bash distro_upgrade.sh --debug --check
 ```
 
 ### 系统修复
 
 ```bash
 # 等待 APT 锁释放，修复 dpkg、依赖和 GRUB 配置
-sudo ./distro_upgrade.sh --fix-only
+sudo bash distro_upgrade.sh --fix-only
 
 # 专门修复 GRUB 引导（确认目标磁盘后使用）
-sudo ./distro_upgrade.sh --fix-grub
+sudo bash distro_upgrade.sh --fix-grub
 ```
 
 ### 升级后清理与维护
 
 ```bash
 # 清理升级后残留（旧内核、废弃包、rc 配置、APT 缓存、.dpkg-*）
-sudo ./distro_upgrade.sh --cleanup
+sudo bash distro_upgrade.sh --cleanup
 
 # 自动更新脚本到最新版本
-sudo ./distro_upgrade.sh --self-update
+sudo bash distro_upgrade.sh --self-update
 ```
 
 `--cleanup` 执行五步清理，前后显示磁盘用量对比：
@@ -356,7 +353,7 @@ systemctl status apt-daily.service apt-daily-upgrade.service
 确认其他包管理任务结束后，可运行：
 
 ```bash
-sudo ./distro_upgrade.sh --fix-only
+sudo bash distro_upgrade.sh --fix-only
 ```
 
 ### ❓ 重启后系统无法引导
@@ -365,7 +362,7 @@ sudo ./distro_upgrade.sh --fix-only
 
 ```bash
 # 系统仍可启动时：
-sudo ./distro_upgrade.sh --fix-grub
+sudo bash distro_upgrade.sh --fix-grub
 
 # 救援环境中按实际磁盘和挂载情况处理：
 grub-install /dev/sdX
@@ -379,7 +376,7 @@ update-grub
 ```bash
 sudo dpkg --configure -a
 sudo apt-get --fix-broken install
-sudo ./distro_upgrade.sh --fix-only
+sudo bash distro_upgrade.sh --fix-only
 ```
 
 ### ❓ initramfs 报 `hooks/fsck failed` 或出现 `/var/adm/<UUID>`
@@ -389,7 +386,7 @@ sudo ./distro_upgrade.sh --fix-only
 ```bash
 sudo cat /etc/ld.so.preload
 sudo env --unset=LD_PRELOAD ldd /sbin/fsck
-sudo ./distro_upgrade.sh --preflight
+sudo bash distro_upgrade.sh --preflight
 ```
 
 在确认异常库来源前，不要创建缺失目录绕过错误，也不要重启到缺少 initrd 的新内核。建议先创建快照并通过服务商控制台或安全工具完成系统排查。
@@ -479,7 +476,8 @@ systemctl status networking systemd-networkd NetworkManager
 
 | 版本 | 日期 | 主要变更 |
 |------|------|----------|
-| **v3.7.2** | 2026-07-04 | 修复 `--preflight` 入口缺少欢迎页的问题；预检启动时先显示 DistroLift 菜单、能力范围和风险提示 |
+| **v3.7.3** | 2026-07-04 | `--preflight` 恢复为安静预检；默认升级入口显示 DistroLift 脚本信息、用途、项目提示和风险确认；README 主命令简化为 `sudo bash distro_upgrade.sh` |
+| **v3.7.2** | 2026-07-04 | 调整启动风险页结构，拆分 DistroLift 菜单展示与真实升级 `YES` 确认 |
 | **v3.7.1** | 2026-07-04 | 项目展示名更新为 DistroLift Auto Upgrade；真实升级前新增集中风险确认页，确认一次后稳定版流程继续自动化 |
 | **v3.7** | 2026-07-04 | 自动化与 VPS 成功率优化：稳定版默认自动继续、低内存资源门槛、临时 Swap、Debian/Ubuntu 共用 apt 恢复、修正 Ubuntu 26.04 Resolute |
 | **v3.6** | 2026-06-10 | VPS 兼容性全面加固：ARM64 架构支持、容器自动识别、非交互终端安全降级、CDN 自更新回退、EFI 多路径检测、GPG 恢复路径修复；关联数组重构、日志拆分等 |

@@ -5,13 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Current Project State
 
 - Project display name: DistroLift Auto Upgrade.
-- Current production script: `distro_upgrade.sh` v3.7.2 (`SCRIPT_DATE=2026-07-04`), about 2220 lines.
+- Current production script: `distro_upgrade.sh` v3.7.3 (`SCRIPT_DATE=2026-07-04`), about 2240 lines.
 - Production scope: Debian 11 -> 12 -> 13 and Ubuntu LTS 20.04 -> 22.04 -> 24.04 -> 26.04.
 - Ubuntu 26.04 codename is `resolute`.
 - Stable adjacent upgrades are automation-first and continue by default; use `--require-confirm` to restore manual confirmation.
 - Debian 13 -> 14 remains gated by `--allow-testing` and requires explicit `YES` confirmation unless forced.
 - `--auto-reboot` is opt-in only. Successful upgrades do not reboot automatically by default.
-- `--preflight` shows the DistroLift intro/risk banner before checks. Real upgrades show the same risk content and require `YES`; `--force` skips this confirmation for explicit automation.
+- `--preflight` is a quiet deep-check mode. Real upgrades show the DistroLift intro/risk banner and require `YES`; `--force` skips this confirmation for explicit automation.
 - Low-memory / NAT VPS handling is part of v3.7: physical memory, swap, root free space, and `/boot` free space are checked before sources are changed. Reasonable low-memory systems may get a temporary swap file that is removed on exit; extremely small systems are rejected before upgrade.
 
 ## Build & Test
