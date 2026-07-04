@@ -12,6 +12,7 @@ fail() {
 bash -n "$SCRIPT"
 
 help_output="$(bash "$SCRIPT" --help)"
+grep -q -- 'DistroLift Auto Upgrade' <<<"$help_output" || fail "help misses project name"
 grep -q -- '--stable-only' <<<"$help_output" || fail "help misses --stable-only"
 grep -q -- '--allow-testing' <<<"$help_output" || fail "help misses --allow-testing"
 grep -q -- '--preflight' <<<"$help_output" || fail "help misses --preflight"
@@ -75,6 +76,10 @@ grep -Fq '[trusted=yes]' "$SCRIPT" || fail "missing GPG error recovery path"
 grep -q 'MIN_PHYSICAL_MEM_MB' "$SCRIPT" || fail "missing low-memory resource gate"
 grep -q 'prepare_temporary_swap' "$SCRIPT" || fail "missing temporary swap helper"
 grep -q 'REQUIRE_CONFIRM' "$SCRIPT" || fail "missing stable upgrade confirmation override"
+grep -q 'show_startup_risk_banner' "$SCRIPT" || fail "missing startup risk banner"
+STARTUP_RISK_CONFIRMED=0
+FORCE=1 show_startup_risk_banner "Debian" "12" "13" "trixie" >/dev/null 2>&1
+[[ "$STARTUP_RISK_CONFIRMED" == "1" ]] || fail "force mode should acknowledge startup risk"
 
 orig_free="$(declare -f free 2>/dev/null || true)"
 orig_df="$(declare -f df 2>/dev/null || true)"

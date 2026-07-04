@@ -1,6 +1,6 @@
-# 🚀 Debian / Ubuntu Auto Upgrade Tool
+# 🚀 DistroLift Auto Upgrade
 
-> 面向 Debian 与 Ubuntu LTS 的智能逐级升级工具，支持 VPS 环境优化、自动错误修复与保守升级策略
+> 面向 Debian 与 Ubuntu LTS 的智能逐级升级工具，支持 VPS / NAT VPS 环境优化、自动错误修复与保守升级策略
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![GitHub release](https://img.shields.io/github/release/everett7623/debian-auto-upgrade.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
@@ -8,12 +8,12 @@
 [![Debian](https://img.shields.io/badge/Debian-11--13-red.svg)](https://www.debian.org/)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-LTS-orange.svg)](https://ubuntu.com/)
 [![Bash](https://img.shields.io/badge/Language-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Version](https://img.shields.io/badge/Version-3.7-brightgreen.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
+[![Version](https://img.shields.io/badge/Version-3.7.1-brightgreen.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
 ![Visitors](https://visitor-badge.laobi.icu/badge?page_id=everett7623.debian-auto-upgrade)
 
-面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS 环境深度优化，具备完善的错误恢复与容错能力。
+**DistroLift Auto Upgrade** 是面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS / NAT VPS 环境深度优化，具备完善的错误恢复与容错能力。
 
-> ⚠️ 发行版升级始终存在服务中断、软件源不兼容和无法启动的风险。生产环境请先创建整机快照，并准备云厂商控制台、VNC 或串口控制台。
+> ⚠️ 首次进入真实升级前，脚本会显示风险确认页。请先创建整机快照、单独备份业务数据，并准备云厂商控制台、VNC 或串口控制台。
 
 ## ✨ 功能特性
 
@@ -28,6 +28,7 @@
 - 🏗️ **多架构兼容** — 支持 x86_64 和 ARM64 (aarch64)，自动选择正确的 GRUB 包和目标
 - 🐳 **容器智能识别** — 自动检测 OpenVZ / LXC / Docker 环境，跳过 GRUB 和 /boot 相关操作
 - 🤖 **自动化优先** — 稳定版相邻升级默认自动继续，`--require-confirm` 可恢复人工确认
+- 🧭 **启动风险确认** — 真实升级前集中提示能力范围、备份要求和失败风险，确认一次后稳定版流程尽量自动完成
 - 🧠 **低内存 VPS 保护** — 检查内存、Swap、根分区和 `/boot`，合理时自动创建临时 Swap，过低配置停止升级
 - 📊 **彩色日志输出** — 带时间戳的分级日志，`--debug` 模式输出完整诊断信息
 - 🔍 **升级前后验证** — 自动校验升级结果，失败时触发错误恢复流程
@@ -453,6 +454,7 @@ systemctl status networking systemd-networkd NetworkManager
 
 | 版本 | 日期 | 主要变更 |
 |------|------|----------|
+| **v3.7.1** | 2026-07-04 | 项目展示名更新为 DistroLift Auto Upgrade；真实升级前新增集中风险确认页，确认一次后稳定版流程继续自动化 |
 | **v3.7** | 2026-07-04 | 自动化与 VPS 成功率优化：稳定版默认自动继续、低内存资源门槛、临时 Swap、Debian/Ubuntu 共用 apt 恢复、修正 Ubuntu 26.04 Resolute |
 | **v3.6** | 2026-06-10 | VPS 兼容性全面加固：ARM64 架构支持、容器自动识别、非交互终端安全降级、CDN 自更新回退、EFI 多路径检测、GPG 恢复路径修复；关联数组重构、日志拆分等 |
 | **v3.5** | 2026-06-10 | 新增 `--cleanup`（升级后五步清理）和 `--self-update`（从 GitHub 自动更新）；修复跨版本 GPG 签名验证和云镜像 initramfs 预检失败 |

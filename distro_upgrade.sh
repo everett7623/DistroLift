@@ -1,9 +1,10 @@
 #!/bin/bash
 # =============================================================================
+# 项目名称: DistroLift Auto Upgrade
 # 脚本名称: distro_upgrade.sh
-# 描    述: Debian / Ubuntu 系统自动逐级升级脚本
+# 描    述: Debian / Ubuntu LTS 自动逐级升级工具
 #           生产入口支持 Debian 11~13 与 Ubuntu LTS 相邻升级
-#           适用于 VPS、物理机、虚拟机等大多数 Linux 环境
+#           适用于 VPS、NAT VPS、物理机、虚拟机等大多数 Linux 环境
 # =============================================================================
 # 版本历史:
 #   v1.0  2024-01-01  初始版本
@@ -65,6 +66,9 @@
 #                     - 低内存但可升级的 VPS 自动创建临时 swap，退出时清理
 #                     - Debian / Ubuntu 共用 apt update 恢复路径，Ubuntu 使用 ubuntu-keyring
 #                     - 修正 Ubuntu 26.04 LTS 代号为 resolute
+#   v3.7.1 2026-07-04  品牌与启动风险确认
+#                     - 项目展示名更名为 DistroLift Auto Upgrade
+#                     - 真实升级前显示能力、适用范围和风险清单，确认一次后继续自动化流程
 # =============================================================================
 # 使用方法:
 #   chmod +x distro_upgrade.sh
@@ -88,7 +92,9 @@
 set -Ee -o pipefail
 
 # ── 脚本元信息 ────────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.7"
+PROJECT_NAME="DistroLift Auto Upgrade"
+PROJECT_SUBTITLE="Debian / Ubuntu LTS 自动逐级升级工具"
+SCRIPT_VERSION="3.7.1"
 SCRIPT_NAME="distro_upgrade.sh"
 SCRIPT_DATE="2026-07-04"
 SCRIPT_REPO="https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh"
@@ -104,6 +110,7 @@ KEEP_RUN_DIR=0
 STOPPED_APT_UNITS=()
 TEMP_SWAP_FILE=""
 TEMP_SWAP_CREATED=0
+STARTUP_RISK_CONFIRMED=0
 
 # ── VPS 资源门槛 ──────────────────────────────────────────────────────────────
 MIN_ROOT_FREE_MB="${MIN_ROOT_FREE_MB:-2048}"
@@ -1123,11 +1130,69 @@ safe_reboot() {
     fi
 }
 
+show_startup_risk_banner() {
+    local distro="$1"
+    local current="$2"
+    local target="$3"
+    local target_name="$4"
+
+    [[ "$STARTUP_RISK_CONFIRMED" == "1" ]] && return 0
+
+    if [[ "${FORCE:-0}" == "1" ]]; then
+        log_warning "强制模式已跳过启动风险确认；请确认快照、备份和控制台访问已准备好"
+        STARTUP_RISK_CONFIRMED=1
+        return 0
+    fi
+
+    if [[ ! -e /dev/tty ]]; then
+        log_error "无交互终端，无法完成启动风险确认"
+        log_error "如已确认快照、业务备份和控制台可用，可在自动化任务中显式使用 --force"
+        exit 1
+    fi
+
+    cat >/dev/tty << EOF
+
+╔════════════════════════════════════════════════════════════════════╗
+║                    ${PROJECT_NAME}                    ║
+║              ${PROJECT_SUBTITLE}              ║
+╠════════════════════════════════════════════════════════════════════╣
+║ 本次计划: ${distro} ${current}  →  ${target} (${target_name})
+║
+║ 可以做什么:
+║   • 自动执行相邻发行版升级，不跨代跳级
+║   • 升级前备份并禁用第三方 APT 源 / backports
+║   • 等待 APT 锁，预检 dpkg、initramfs、异常动态库注入
+║   • 低内存 VPS 自动评估资源，合理时创建临时 Swap
+║   • 升级失败保留日志，不反复重试同一故障
+║   • 常规路径只刷新 GRUB 配置，不写入 MBR
+║
+║ 你必须先确认:
+║   1. 已创建整机快照或云盘快照
+║   2. 已单独备份数据库、网站文件、密钥和业务配置
+║   3. 已准备 VNC / 串口 / 云厂商控制台，SSH 中断也能救援
+║   4. 已确认第三方软件支持目标系统版本
+║   5. 接受升级期间服务中断、网络失联、无法启动等风险
+║
+║ 通过此确认后，稳定版升级将尽量自动完成，不再反复打断。
+╚════════════════════════════════════════════════════════════════════╝
+
+EOF
+
+    read -r -p "输入 YES 表示已理解风险并继续升级，直接回车取消: " REPLY </dev/tty
+    if [[ "$REPLY" != "YES" ]]; then
+        log_info "已取消升级；请完成快照、备份和控制台准备后再运行"
+        exit 0
+    fi
+
+    STARTUP_RISK_CONFIRMED=1
+}
+
 # ── 帮助信息 ──────────────────────────────────────────────────────────────────
 show_help() {
     cat << EOF
 ╔══════════════════════════════════════════════════════════════════╗
-║     Debian / Ubuntu 自动逐级升级脚本 v${SCRIPT_VERSION} (${SCRIPT_DATE})      ║
+║       ${PROJECT_NAME} v${SCRIPT_VERSION} (${SCRIPT_DATE})       ║
+║           ${PROJECT_SUBTITLE}           ║
 ╚══════════════════════════════════════════════════════════════════╝
 
 📖 用法: $0 [选项]
@@ -1421,7 +1486,7 @@ main_upgrade() {
     nxt=$(get_next_version "$cur")
 
     log_info "════════════════════════════════════════"
-    log_info "Debian 自动升级脚本 v${SCRIPT_VERSION}"
+    log_info "${PROJECT_NAME} v${SCRIPT_VERSION}"
     log_info "当前: Debian $cur ($cur_name) [$cur_stat]"
 
     # 运行统计
@@ -1447,6 +1512,7 @@ main_upgrade() {
     fi
 
     log_info "目标: Debian $nxt ($nxt_name) [$nxt_stat]"
+    show_startup_risk_banner "Debian" "$cur" "$nxt" "$nxt_name"
 
     # 稳定版相邻升级默认自动继续；非稳定版本仍需额外确认。
     if [[ "$nxt_stat" =~ testing|unstable ]]; then
@@ -1573,7 +1639,7 @@ ubuntu_upgrade() {
     local nxt_version="${UBUNTU_NEXT[$version_id]:-}"
 
     log_info "════════════════════════════════════════"
-    log_info "Ubuntu LTS 升级脚本 v${SCRIPT_VERSION}"
+    log_info "${PROJECT_NAME} v${SCRIPT_VERSION}"
     log_info "当前: Ubuntu $version_id ($cur_codename)"
 
     # 运行统计
@@ -1590,6 +1656,7 @@ ubuntu_upgrade() {
 
     local nxt_codename="${UBUNTU_CODENAME[$nxt_version]}"
     log_info "目标: Ubuntu $nxt_version ($nxt_codename)"
+    show_startup_risk_banner "Ubuntu" "$version_id" "$nxt_version" "$nxt_codename"
 
     confirm_stable_upgrade "Ubuntu" "$version_id" "$nxt_version" "$nxt_codename"
 

@@ -1,10 +1,26 @@
 # 更新日志
 
-本文件记录 Debian Auto Upgrade Tool 的正式版本变更。
+本文件记录 DistroLift Auto Upgrade 的正式版本变更。
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本编号与 README 的版本历史保持一致。
 
 ## 未发布
+
+- 暂无。
+
+## v3.7.1 - 2026-07-04
+
+### 新增
+
+- 真实升级前新增 DistroLift 启动风险确认页，集中展示可执行能力、适用范围、快照/备份/控制台要求和升级风险。
+- 确认启动风险后，稳定版相邻升级继续保持自动化，避免后续反复确认。
+
+### 变更
+
+- 项目展示名称从 Debian / Ubuntu Auto Upgrade Tool 更新为 DistroLift Auto Upgrade，弱化旧 Debian-only 命名。
+- 帮助页、README、AI 工具文档和 Kiro 规格同步新项目名与当前开发进度。
+
+## v3.7 - 2026-07-04
 
 ### 新增
 

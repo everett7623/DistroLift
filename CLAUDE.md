@@ -2,81 +2,117 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Current Project State
+
+- Project display name: DistroLift Auto Upgrade.
+- Current production script: `distro_upgrade.sh` v3.7.1 (`SCRIPT_DATE=2026-07-04`), about 2210 lines.
+- Production scope: Debian 11 -> 12 -> 13 and Ubuntu LTS 20.04 -> 22.04 -> 24.04 -> 26.04.
+- Ubuntu 26.04 codename is `resolute`.
+- Stable adjacent upgrades are automation-first and continue by default; use `--require-confirm` to restore manual confirmation.
+- Debian 13 -> 14 remains gated by `--allow-testing` and requires explicit `YES` confirmation unless forced.
+- `--auto-reboot` is opt-in only. Successful upgrades do not reboot automatically by default.
+- A startup risk confirmation page is shown before real upgrades. It summarizes capabilities, backup requirements, console access requirements, and failure risks. `--force` skips this confirmation for explicit automation.
+- Low-memory / NAT VPS handling is part of v3.7: physical memory, swap, root free space, and `/boot` free space are checked before sources are changed. Reasonable low-memory systems may get a temporary swap file that is removed on exit; extremely small systems are rejected before upgrade.
+
 ## Build & Test
 
 ```bash
 make check          # Full CI: syntax check + shellcheck + smoke tests
 make syntax         # bash -n on all .sh files
-make shellcheck     # Static analysis (requires shellcheck)
+make shellcheck     # Static analysis; skipped by Makefile when shellcheck is missing
 make test           # Smoke tests only
-bash tests/smoke.sh # Run smoke tests directly (no shellcheck)
+bash tests/smoke.sh # Run smoke tests directly
 ```
 
-Smoke tests are non-privileged: they source the main script and unit-test version mappings, static invariants (no lock deletion, no MBR writes, single dist-upgrade call), and CLI flag presence in help output.
+Smoke tests are non-privileged. They source the main script and cover Debian / Ubuntu version mapping, Ubuntu mirror selection including `ubuntu-ports`, low-memory VPS resource gates, required CLI flags, and hard safety invariants.
+
+If developing on Windows, Git Bash can run syntax and smoke tests. Full behavior testing must be done in isolated Debian / Ubuntu VMs with snapshots.
 
 ## Architecture
 
-The entire tool is a single Bash script: `distro_upgrade.sh` (v3.5, ~1365 lines). It is the **only supported production entry point**. Legacy scripts in `scripts/` are historical reference only.
+The entire supported production tool is a single Bash script: `distro_upgrade.sh`. Legacy scripts in `scripts/` are historical reference only and must not be used as production entry points.
 
-### Execution flow
+### Execution Flow
 
+```text
+main() -> parse args -> set_mirror() -> check_root() -> check_system()
+  -> OS dispatch:
+     Debian -> main_upgrade()
+     Ubuntu -> ubuntu_upgrade()
+
+main_upgrade() / ubuntu_upgrade()
+  -> get_current_version()
+  -> get_next_version()
+  -> show_startup_risk_banner() before changing system state
+  -> confirm_stable_upgrade() for stable adjacent paths
+  -> save_network_config()
+  -> pre_upgrade_preparation(target_codename, os_id)
+       -> stop_apt_units()
+       -> wait_for_apt_locks()
+       -> check_upgrade_capacity()
+       -> prepare_temporary_swap()
+       -> check_runtime_injection()
+       -> check_initramfs_health()
+       -> dpkg audit / configure / fix-broken best-effort
+       -> reinstall debian-archive-keyring or ubuntu-keyring
+       -> clean_apt_sources()
+       -> conservative GRUB debconf preset when a boot disk is detected
+  -> write new /etc/apt/sources.list
+  -> apt_update_with_recovery(keyring)
+       -> GPG/keyring recovery through temporary [trusted=yes]
+       -> 404 / Release-file recovery by disabling residual extra sources
+  -> apt-get upgrade
+  -> apt-get dist-upgrade
+  -> post_upgrade_fixes()
+       -> compare network interface names, warn only
+       -> build latest initramfs only if missing
+       -> refresh GRUB config only, no grub-install
+  -> verify target version
+  -> reboot only with --auto-reboot
 ```
-main() → parse args → set_mirror() → check_root() → check_system() → main_upgrade()
-  ├── get_current_version()  (4 fallback strategies)
-  ├── get_next_version()     (respects STABLE_ONLY gate)
-  ├── pre_upgrade_preparation()
-  │     ├── stop_apt_units()           → stop systemd apt timers
-  │     ├── wait_for_apt_locks()       → fuser-based wait, timeout 300s
-  │     ├── check_runtime_injection()  → LD_PRELOAD / fsck dependency audit
-  │     ├── check_initramfs_health()   → pre-build initramfs before touching sources
-  │     ├── dpkg --audit / --configure -a / --fix-broken (best-effort, no ERR trap)
-  │     ├── apt-get install --reinstall debian-archive-keyring  → GPG key update before source switch
-  │     └── clean_apt_sources() → backup & disable .list + .sources, comment backports
-  ├── Write new /etc/apt/sources.list
-  ├── apt-get update (with GPG error recovery: [trusted=yes] → install keyring → remove trust)
-  ├── apt-get upgrade        (minimal — aborts on failure, no retry)
-  ├── apt-get dist-upgrade   (full — aborts on failure, no retry)
-  └── post_upgrade_fixes()
-        ├── fix_network_config()   → compare interface names, warn only
-        ├── update-initramfs       → only if latest kernel lacks initrd
-        └── update-grub            → config refresh only, no grub-install
-```
 
-### Version mapping
+### Version Mapping
 
-`get_version_info()` and `get_next_version()` are the central policy tables. They encode:
-- Codename and stability status per numeric version
-- Whether the next version is reachable (gated by `STABLE_ONLY`)
-- `STABLE_ONLY=1` (default): 13→14 is blocked; `STABLE_ONLY=0` (--allow-testing): 13→14 is permitted
+`get_version_info()` and `get_next_version()` are the central policy tables.
 
-When adding a new Debian release, update both functions, `SCRIPT_VERSION`/`SCRIPT_DATE`, the sources.list template (non-free-firmware, security suffix), README support matrix, and CHANGELOG.
+- Debian codenames/statuses are in `DEBIAN_CODENAME`, `DEBIAN_STATUS`, and `DEBIAN_NEXT`.
+- Ubuntu LTS codenames/statuses are in `UBUNTU_CODENAME`, `UBUNTU_STATUS`, and `UBUNTU_NEXT`.
+- `STABLE_ONLY=1` blocks Debian 13 -> 14; `STABLE_ONLY=0` via `--allow-testing` permits it with high-risk confirmation.
+- Ubuntu only supports LTS adjacent upgrades and does not use the Debian testing gate.
 
-### Hard safety invariants (enforced by smoke tests)
+When adding a new Debian or Ubuntu release, update the mapping arrays, `SCRIPT_VERSION`, `SCRIPT_DATE`, sources.list generation, README support matrix, CHANGELOG, and smoke tests.
 
-- Never delete APT/dpkg lock files (`/var/lib/dpkg/lock*`, `/var/cache/apt/*/lock`)
-- Never write directly to boot sectors (no `dd of=...boot_disk`)
-- Only one `apt-get dist-upgrade` call in normal flow
-- Generated sources.list must not include `deb-src` lines
-- `check_initramfs_health`, `check_runtime_injection`, `debian-archive-keyring`, and `[trusted=yes]` path must all be present
+## Hard Safety Invariants
 
-### Error handling pattern
+- Never delete APT/dpkg lock files; only wait for locks.
+- Never write directly to boot sectors in the normal upgrade path.
+- Do not add `deb-src` lines to generated sources.
+- Keep `check_initramfs_health`, `check_runtime_injection`, keyring recovery, and `[trusted=yes]` recovery paths covered by tests.
+- Stable upgrades may be automatic, but high-risk testing upgrades still require explicit opt-in.
+- Do not auto-reboot unless `--auto-reboot` is set.
+- Do not auto-restore third-party repositories after upgrade.
+- Do not auto-rename network interfaces or restart network services.
+- Do not run `autoremove` automatically after the main upgrade.
 
-The script uses `set -Ee -o pipefail` with a global ERR trap (`error_recovery()`) that stops immediately — it does **not** retry. This is intentional: previous versions repeated failing operations, wasting time without fixing root causes. The trap preserves the run directory (`KEEP_RUN_DIR=1`) so logs survive.
+## Development Workflow
 
-`dpkg --audit` and `dpkg --configure -a` in `pre_upgrade_preparation()` are run with `|| true` because they can return non-zero on already-broken systems, and the ERR trap would otherwise abort before the upgrade even starts.
+- Before making a versioned change, back up the files to a local `.codex-backups/vX.Y-<timestamp>/` directory.
+- Keep Debian and Ubuntu LTS behavior aligned where possible. Shared behavior belongs in shared helpers, not duplicate distro-specific branches.
+- Add tests for policy changes in `tests/smoke.sh`.
+- Keep `AGENTS.md`, `CLAUDE.md`, `docs/DEVELOPMENT.md`, `docs/SAFETY.md`, README, CHANGELOG, and Kiro specs aligned when project behavior changes.
+- Do not modify `scripts/` unless the task explicitly concerns legacy historical scripts.
 
-### Temp directory
-
-Each invocation creates `/tmp/debian-auto-upgrade-<YYYYMMDD_HHMMSS>_<PID>/`. Unless `KEEP_RUN_DIR=1` (set on failure), it is deleted on EXIT via a `trap cleanup EXIT`. On failure, the directory is preserved and its path printed.
-
-## Key files
+## Key Files
 
 | File | Purpose |
 |------|---------|
 | `distro_upgrade.sh` | Single source of truth; all production logic |
-| `tests/smoke.sh` | Non-privileged unit tests; sources main script to test functions |
-| `Makefile` | CI entry point; wraps bash -n, shellcheck, smoke tests |
+| `tests/smoke.sh` | Non-privileged tests for mappings, flags, safety invariants, and helper behavior |
+| `Makefile` | CI entry point wrapping syntax, shellcheck, and smoke tests |
 | `.github/workflows/ci.yml` | Runs `make check` on ubuntu-latest |
-| `docs/SAFETY.md` | Hard safety boundaries (locks, MBR, network, autoremove) |
-| `docs/DEVELOPMENT.md` | Dev environment setup and release checklist |
-| `scripts/` | Legacy per-version scripts; do not modify or use as reference for current behavior |
+| `README.md` | User-facing usage, support matrix, and operational guidance |
+| `CHANGELOG.md` | Version progress and release notes |
+| `docs/DEVELOPMENT.md` | Development workflow, backup rule, and release checklist |
+| `docs/SAFETY.md` | Hard safety boundaries |
+| `.kiro/specs/` | Kiro requirements/design/task progress snapshots |
+| `scripts/` | Legacy historical scripts only |
