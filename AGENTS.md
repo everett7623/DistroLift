@@ -5,13 +5,13 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ## Current Project State
 
 - Project display name: DistroLift Auto Upgrade.
-- Current production script: `distro_upgrade.sh` v3.7.3 (`SCRIPT_DATE=2026-07-04`), about 2240 lines.
+- Current production script: `distro_upgrade.sh` v3.7.4 (`SCRIPT_DATE=2026-07-04`), about 2260 lines.
 - Production scope: Debian 11 -> 12 -> 13 and Ubuntu LTS 20.04 -> 22.04 -> 24.04 -> 26.04.
 - Ubuntu 26.04 codename is `resolute`.
 - Stable adjacent upgrades are automation-first and continue by default; use `--require-confirm` to restore manual confirmation.
 - Debian 13 -> 14 remains gated by `--allow-testing` and requires explicit `YES` confirmation unless forced.
 - `--auto-reboot` is opt-in only. Successful upgrades do not reboot automatically by default.
-- `--preflight` is a quiet deep-check mode. Real upgrades show the DistroLift intro/risk banner and require `YES`; `--force` skips this confirmation for explicit automation.
+- `--preflight` is a quiet deep-check mode. Default real upgrades show the DistroLift intro/risk banner as the first screen and require `YES` before system checks; `--force` skips this confirmation for explicit automation.
 - Low-memory / NAT VPS handling is part of v3.7: physical memory, swap, root free space, and `/boot` free space are checked before sources are changed. Reasonable low-memory systems may get a temporary swap file that is removed on exit; extremely small systems are rejected before upgrade.
 
 ## Build & Test
@@ -35,7 +35,7 @@ The entire supported production tool is a single Bash script: `distro_upgrade.sh
 ### Execution Flow
 
 ```text
-main() -> parse args -> set_mirror() -> check_root() -> check_system()
+main() -> parse args -> show_initial_startup_banner() -> set_mirror() -> check_root() -> check_system()
   -> OS dispatch:
      Debian -> main_upgrade()
      Ubuntu -> ubuntu_upgrade()
@@ -43,7 +43,7 @@ main() -> parse args -> set_mirror() -> check_root() -> check_system()
 main_upgrade() / ubuntu_upgrade()
   -> get_current_version()
   -> get_next_version()
-  -> show_startup_risk_banner() before changing system state
+  -> show_startup_risk_banner() no-ops if first-screen risk confirmation already passed
   -> confirm_stable_upgrade() for stable adjacent paths
   -> save_network_config()
   -> pre_upgrade_preparation(target_codename, os_id)

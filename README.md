@@ -8,12 +8,12 @@
 [![Debian](https://img.shields.io/badge/Debian-11--13-red.svg)](https://www.debian.org/)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-LTS-orange.svg)](https://ubuntu.com/)
 [![Bash](https://img.shields.io/badge/Language-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Version](https://img.shields.io/badge/Version-3.7.3-brightgreen.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
+[![Version](https://img.shields.io/badge/Version-3.7.4-brightgreen.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
 ![Visitors](https://visitor-badge.laobi.icu/badge?page_id=everett7623.debian-auto-upgrade)
 
 **DistroLift Auto Upgrade** 是面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS / NAT VPS 环境深度优化，具备完善的错误恢复与容错能力。
 
-> ⚠️ 默认执行升级时会先在 SSH 中显示 DistroLift 脚本信息、用途、项目提示和风险清单，并要求输入 `YES` 确认。确认后稳定版升级会尽量自动完成，减少后续交互。请先创建整机快照、单独备份业务数据，并准备云厂商控制台、VNC 或串口控制台。
+> ⚠️ 默认执行升级时，第一屏会先在 SSH 中显示 DistroLift 脚本信息、用途、项目提示和风险清单，并要求输入 `YES` 确认。确认后才开始系统检查，稳定版升级会尽量自动完成，减少后续交互。请先创建整机快照、单独备份业务数据，并准备云厂商控制台、VNC 或串口控制台。
 
 ## ✨ 功能特性
 
@@ -28,7 +28,7 @@
 - 🏗️ **多架构兼容** — 支持 x86_64 和 ARM64 (aarch64)，自动选择正确的 GRUB 包和目标
 - 🐳 **容器智能识别** — 自动检测 OpenVZ / LXC / Docker 环境，跳过 GRUB 和 /boot 相关操作
 - 🤖 **自动化优先** — 稳定版相邻升级默认自动继续，`--require-confirm` 可恢复人工确认
-- 🧭 **启动风险确认** — 真实升级前集中提示能力范围、备份要求和失败风险，确认一次后稳定版流程尽量自动完成
+- 🧭 **第一屏风险确认** — 默认运行后先集中提示脚本信息、用途、备份要求和失败风险，确认一次后稳定版流程尽量自动完成
 - 🧠 **低内存 VPS 保护** — 检查内存、Swap、根分区和 `/boot`，合理时自动创建临时 Swap，过低配置停止升级
 - 📊 **彩色日志输出** — 带时间戳的分级日志，`--debug` 模式输出完整诊断信息
 - 🔍 **升级前后验证** — 自动校验升级结果，失败时触发错误恢复流程
@@ -465,6 +465,7 @@ systemctl status networking systemd-networkd NetworkManager
 
 | 版本 | 日期 | 主要变更 |
 |------|------|----------|
+| **v3.7.4** | 2026-07-04 | 默认升级入口第一屏先显示 DistroLift 脚本信息、用途、风险清单和 `YES` 确认；确认后再开始系统检查 |
 | **v3.7.3** | 2026-07-04 | `--preflight` 恢复为安静预检；默认升级入口显示 DistroLift 脚本信息、用途、项目提示和风险确认；README 主命令简化为一行下载并执行 |
 | **v3.7.2** | 2026-07-04 | 调整启动风险页结构，拆分 DistroLift 菜单展示与真实升级 `YES` 确认 |
 | **v3.7.1** | 2026-07-04 | 项目展示名更新为 DistroLift Auto Upgrade；真实升级前新增集中风险确认页，确认一次后稳定版流程继续自动化 |

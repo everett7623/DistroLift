@@ -74,6 +74,9 @@
 #   v3.7.3 2026-07-04  简化默认入口体验
 #                     - --preflight 保持安静预检，不显示欢迎页和风险确认
 #                     - README 推荐 sudo bash distro_upgrade.sh 方式运行
+#   v3.7.4 2026-07-04  启动页前移到第一屏
+#                     - 默认升级入口先显示脚本信息、用途、风险和 YES 确认
+#                     - 用户确认后再执行系统检查，后续稳定版流程减少交互
 # =============================================================================
 # 使用方法:
 #   sudo bash distro_upgrade.sh              # 正常升级（稳定版，默认）
@@ -98,7 +101,7 @@ set -Ee -o pipefail
 # ── 脚本元信息 ────────────────────────────────────────────────────────────────
 PROJECT_NAME="DistroLift Auto Upgrade"
 PROJECT_SUBTITLE="Debian / Ubuntu LTS 自动逐级升级工具"
-SCRIPT_VERSION="3.7.3"
+SCRIPT_VERSION="3.7.4"
 SCRIPT_NAME="distro_upgrade.sh"
 SCRIPT_DATE="2026-07-04"
 SCRIPT_REPO="https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh"
@@ -1191,9 +1194,16 @@ show_startup_risk_banner() {
     local target="$3"
     local target_name="$4"
 
+    confirm_startup_risk "升级确认" "${distro} ${current} -> ${target} (${target_name})"
+}
+
+confirm_startup_risk() {
+    local mode="$1"
+    local plan="$2"
+
     [[ "$STARTUP_RISK_CONFIRMED" == "1" ]] && return 0
 
-    show_project_intro_banner "升级确认" "${distro} ${current} -> ${target} (${target_name})"
+    show_project_intro_banner "$mode" "$plan"
 
     if [[ "${FORCE:-0}" == "1" ]]; then
         log_warning "强制模式已跳过启动风险确认；请确认快照、备份和控制台访问已准备好"
@@ -1214,6 +1224,15 @@ show_startup_risk_banner() {
     fi
 
     STARTUP_RISK_CONFIRMED=1
+}
+
+show_initial_startup_banner() {
+    local plan="自动检测当前 Debian / Ubuntu 版本，并执行相邻稳定版升级"
+    if [[ "${STABLE_ONLY:-1}" == "0" ]]; then
+        plan="自动检测当前 Debian / Ubuntu 版本；Debian 允许 testing 路径"
+    fi
+
+    confirm_startup_risk "启动确认" "$plan"
 }
 
 # ── 帮助信息 ──────────────────────────────────────────────────────────────────
@@ -2224,6 +2243,7 @@ main() {
     # 默认 STABLE_ONLY=1（安全优先）
     export STABLE_ONLY="${STABLE_ONLY:-1}"
 
+    show_initial_startup_banner
     set_mirror
     check_root
     check_system

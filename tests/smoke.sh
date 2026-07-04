@@ -77,6 +77,12 @@ grep -q 'MIN_PHYSICAL_MEM_MB' "$SCRIPT" || fail "missing low-memory resource gat
 grep -q 'prepare_temporary_swap' "$SCRIPT" || fail "missing temporary swap helper"
 grep -q 'REQUIRE_CONFIRM' "$SCRIPT" || fail "missing stable upgrade confirmation override"
 grep -q 'show_startup_risk_banner' "$SCRIPT" || fail "missing startup risk banner"
+grep -q 'show_initial_startup_banner' "$SCRIPT" || fail "missing first-screen startup banner"
+default_entry_block="$(awk '/# 默认 STABLE_ONLY=1/{capture=1} capture {print} /# OS 类型分流/{exit}' "$SCRIPT")"
+startup_line="$(grep -n 'show_initial_startup_banner' <<<"$default_entry_block" | head -1 | cut -d: -f1)"
+check_line="$(grep -n 'check_system' <<<"$default_entry_block" | head -1 | cut -d: -f1)"
+[[ -n "$startup_line" && -n "$check_line" && "$startup_line" -lt "$check_line" ]] \
+    || fail "default startup banner must appear before system checks"
 if awk '/--preflight\)/{in_block=1} in_block && /show_project_intro_banner/{found=1} in_block && /;;/{exit(found ? 0 : 1)}' "$SCRIPT"; then
     fail "preflight should stay plain and must not show intro banner"
 fi
