@@ -1,6 +1,6 @@
 # 🚀 DistroLift Auto Upgrade
 
-> 面向 Debian 与 Ubuntu LTS 的智能逐级升级工具，支持 VPS / NAT VPS 环境优化、自动错误修复与保守升级策略
+> 面向 Debian 与 Ubuntu LTS 的智能逐级升级工具，支持 VPS / NAT VPS 环境优化、保守预检、失败诊断与逐级升级策略
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![GitHub release](https://img.shields.io/github/release/everett7623/debian-auto-upgrade.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
@@ -11,7 +11,7 @@
 [![Version](https://img.shields.io/badge/Version-3.7.4-brightgreen.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
 ![Visitors](https://visitor-badge.laobi.icu/badge?page_id=everett7623.debian-auto-upgrade)
 
-**DistroLift Auto Upgrade** 是面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS / NAT VPS 环境深度优化，具备完善的错误恢复与容错能力。
+**DistroLift Auto Upgrade** 是面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS / NAT VPS 环境深度优化，失败时会停止流程、保留日志并给出修复方向。
 
 > ⚠️ 默认执行升级时，第一屏会先在 SSH 中显示 DistroLift 脚本信息、用途、项目提示和风险清单，并要求输入 `YES` 确认。确认后才开始系统检查，稳定版升级会尽量自动完成，减少后续交互。请先创建整机快照、单独备份业务数据，并准备云厂商控制台、VNC 或串口控制台。
 
@@ -27,12 +27,12 @@
 - 🖥️ **GRUB 保守处理** — 自动识别 UEFI/BIOS，常规升级仅刷新配置，不自动写入 MBR
 - 🏗️ **多架构兼容** — 支持 x86_64 和 ARM64 (aarch64)，自动选择正确的 GRUB 包和目标
 - 🐳 **容器智能识别** — 自动检测 OpenVZ / LXC / Docker 环境，跳过 GRUB 和 /boot 相关操作
-- 🤖 **自动化优先** — 稳定版相邻升级默认自动继续，`--require-confirm` 可恢复人工确认
+- 🤖 **确认后自动化** — 默认第一屏输入 `YES` 后，稳定版相邻升级尽量自动继续；`--require-confirm` 可恢复每次升级前人工确认
 - 🧭 **第一屏风险确认** — 默认运行后先集中提示脚本信息、用途、备份要求和失败风险，确认一次后稳定版流程尽量自动完成
 - 🧠 **低内存 VPS 保护** — 检查内存、Swap、根分区和 `/boot`，合理时自动创建临时 Swap，过低配置停止升级
 - 📊 **彩色日志输出** — 带时间戳的分级日志，`--debug` 模式输出完整诊断信息
-- 🔍 **升级前后验证** — 自动校验升级结果，失败时触发错误恢复流程
-- ⚠️ **风险分级确认** — 稳定版默认自动执行，测试版仍强制输入 `YES`
+- 🔍 **升级前后验证** — 自动校验升级结果，失败时停止流程、保留诊断日志并提示修复方向
+- ⚠️ **风险分级确认** — 默认入口先输入一次 `YES`，Debian testing 路径仍需额外确认
 
 ## 🎯 支持的升级路径
 
@@ -103,11 +103,11 @@ sudo bash distro_upgrade.sh --help
 | `--fix-grub` | 显式执行 GRUB 引导修复 |
 | `--cleanup` | 清理升级后的系统垃圾（旧内核、废弃包、残留配置） |
 | `--self-update` | 从 GitHub 下载最新版本替换当前脚本 |
-| `--force` | 跳过强制确认提示（慎用） |
+| `--force` | 跳过第一屏和后续交互确认（慎用） |
 | `--require-confirm` | 稳定版升级也要求人工确认 |
 | `--auto-reboot` | 升级成功后自动重启（需提前确认控制台可用） |
 | `--stable-only` | 仅升级到稳定版（默认，推荐） |
-| `--allow-testing` | 允许升级到 Debian 14 Forky（testing，仅 Debian） |
+| `--allow-testing` | 允许 Debian 13 升级到 Debian 14 Forky（testing，仅 Debian） |
 | `--mirror <cn\|tuna\|ustc>` | 使用指定国内镜像源 |
 
 ## 💡 使用示例
@@ -131,10 +131,10 @@ sudo bash distro_upgrade.sh --mirror cn
 ### 开发 / 测试环境
 
 ```bash
-# 允许升级到 Forky 测试版（需手动输入 YES 确认）
+# 允许升级到 Forky 测试版（第一屏确认后仍需额外输入 YES）
 sudo bash distro_upgrade.sh --allow-testing
 
-# 自动化场景强制升级（极度谨慎）
+# 自动化场景跳过交互确认（极度谨慎）
 sudo bash distro_upgrade.sh --force --stable-only
 
 # 调试模式排查问题
@@ -263,7 +263,7 @@ sudo bash distro_upgrade.sh --self-update
 - 📝 记录当前网络配置（IP、网关、DNS）
 - 🔑 确保 VNC / 控制台 / 串口访问可用（SSH 升级期间可能中断）
 - 📦 检查 `apt-mark showhold`、`dpkg --audit` 和第三方仓库
-- 📖 阅读目标版本的 Debian Release Notes
+- 📖 阅读目标版本的 Debian Release Notes 或 Ubuntu Release Notes
 
 ### Debian 11 用户须知
 
@@ -283,16 +283,18 @@ sudo bash distro_upgrade.sh --self-update
 - ✅ 已是当前稳定版，**建议保持**
 - ⚠️ 升级到 Debian 14 (Forky) 即进入 testing 分支，存在不稳定风险
 - 🛡️ 使用 `--stable-only`（默认）可防止误升级到测试版
-- 💡 测试版升级需手动输入 `YES` 进行二次确认
+- 💡 测试版升级在第一屏确认后，还需额外输入 `YES` 进行二次确认
 
 ## 🔒 确认机制
 
 | 升级类型 | 确认方式 |
 |----------|----------|
-| 稳定版 → 稳定版 | 默认自动继续；使用 `--require-confirm` 可恢复 `[y/N]` |
-| 稳定版 → 测试版 | 需手动输入 `YES`（大写）并阅读风险说明 |
+| 默认真实升级入口 | 第一屏先输入 `YES`，确认快照、业务备份和控制台访问后才开始系统检查 |
+| 稳定版 → 稳定版 | 第一屏确认后默认自动继续；使用 `--require-confirm` 可在目标版本确认处恢复 `[y/N]` |
+| Debian 稳定版 → Debian testing | 第一屏确认后，还需在 testing 风险提示处再次输入 `YES` |
+| Ubuntu LTS 相邻升级 | 第一屏确认后，按 LTS 相邻版本自动继续 |
 | `--stable-only` 模式 | 不提供测试版升级选项 |
-| `--force` 模式 | 跳过交互确认（极度谨慎） |
+| `--force` 模式 | 跳过第一屏和后续交互确认（极度谨慎） |
 | `--auto-reboot` 模式 | 升级成功后自动重启，不再询问 |
 
 `--force` 只跳过交互确认，不代表操作无风险，也不能替代快照、备份和控制台访问。
@@ -394,7 +396,7 @@ systemctl status networking systemd-networkd NetworkManager
 
 ### ❓ 升级后第三方软件不可用
 
-从 `/etc/apt/sources.list.d.bak_<时间戳>` 逐个恢复仓库，并先确认供应商已支持目标 Debian 版本。不要一次恢复全部旧源。
+从 `/etc/apt/sources.list.d.bak_<时间戳>` 逐个恢复仓库，并先确认供应商已支持目标系统版本。不要一次恢复全部旧源。
 
 ## 📄 问题反馈
 
@@ -430,7 +432,7 @@ systemctl status networking systemd-networkd NetworkManager
 - 默认流程不得删除包管理器锁、写入 MBR 或重启网络
 - 日志信息应清晰，不得输出凭据
 - 修改行为时同步更新 README、CHANGELOG 和测试
-- 在 Pull Request 中说明测试过的 Debian 版本和启动方式
+- 在 Pull Request 中说明测试过的 Debian / Ubuntu 版本和启动方式
 
 详细开发说明：
 
