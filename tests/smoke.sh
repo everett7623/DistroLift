@@ -28,14 +28,14 @@ grep -q -- 'Ubuntu 20.04 (Focal)' <<<"$help_output" || fail "help misses Ubuntu 
 source "$SCRIPT"
 trap - EXIT
 
-[[ "$(get_next_version 11)" == "12" ]] || fail "Debian 11 target"
-[[ "$(get_next_version 12)" == "13" ]] || fail "Debian 12 target"
-[[ -z "$(STABLE_ONLY=1 get_next_version 13)" ]] || fail "stable policy"
-[[ "$(STABLE_ONLY=0 get_next_version 13)" == "14" ]] || fail "testing policy"
-[[ "$(get_version_info 13)" == "trixie|stable" ]] || fail "Trixie status"
-[[ "$(get_version_info 14)" == "forky|testing" ]] || fail "Forky status"
-[[ -z "$(STABLE_ONLY=1 get_next_version 14)" ]] || fail "Forky stable policy"
-[[ -z "$(get_next_version 14)" ]] || fail "Forky no further upgrade"
+[[ "$(get_next_version 11 debian)" == "12" ]] || fail "Debian 11 target"
+[[ "$(get_next_version 12 debian)" == "13" ]] || fail "Debian 12 target"
+[[ -z "$(STABLE_ONLY=1 get_next_version 13 debian)" ]] || fail "stable policy"
+[[ "$(STABLE_ONLY=0 get_next_version 13 debian)" == "14" ]] || fail "testing policy"
+[[ "$(get_version_info 13 debian)" == "trixie|stable" ]] || fail "Trixie status"
+[[ "$(get_version_info 14 debian)" == "forky|testing" ]] || fail "Forky status"
+[[ -z "$(STABLE_ONLY=1 get_next_version 14 debian)" ]] || fail "Forky stable policy"
+[[ -z "$(get_next_version 14 debian)" ]] || fail "Forky no further upgrade"
 [[ "$(get_version_info 22.04 ubuntu)" == "jammy|oldlts" ]] || fail "Ubuntu 22.04 status"
 [[ "$(get_version_info 24.04 ubuntu)" == "noble|lts" ]] || fail "Ubuntu 24.04 status"
 [[ "$(get_version_info 26.04 ubuntu)" == "resolute|lts" ]] || fail "Ubuntu 26.04 status"
@@ -366,7 +366,7 @@ fi
 printf '\n─── Preservation 3.2: Upgrade version detection ───\n'
 
 # Test version 12 → codename bookworm
-v12_info=$(get_version_info 12)
+v12_info=$(get_version_info 12 debian)
 v12_codename=$(echo "$v12_info" | cut -d'|' -f1)
 
 if [[ "$v12_codename" == "bookworm" ]]; then
@@ -376,7 +376,7 @@ else
 fi
 
 # Test version 12 next → 13
-v12_next=$(get_next_version 12)
+v12_next=$(get_next_version 12 debian)
 if [[ "$v12_next" == "13" ]]; then
     pres_pass "Preservation 3.2b: Debian 12 next version is 13"
 else
@@ -384,7 +384,7 @@ else
 fi
 
 # Test version 13 → codename trixie, status stable
-v13_info=$(get_version_info 13)
+v13_info=$(get_version_info 13 debian)
 v13_codename=$(echo "$v13_info" | cut -d'|' -f1)
 v13_status=$(echo "$v13_info" | cut -d'|' -f2)
 
