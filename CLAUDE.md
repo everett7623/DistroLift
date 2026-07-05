@@ -99,6 +99,7 @@ When adding a new Debian or Ubuntu release, update the mapping arrays, `SCRIPT_V
 - Before making a versioned change, back up the files to a local `.codex-backups/vX.Y-<timestamp>/` directory.
 - Keep Debian and Ubuntu LTS behavior aligned where possible. Shared behavior belongs in shared helpers, not duplicate distro-specific branches.
 - Add tests for policy changes in `tests/smoke.sh`.
+- Triage user-provided information before publishing it: put stable, user-actionable, verified content in README/help/web pages; keep screenshots, temporary context, preferences, investigation notes, and unverified assumptions as development-only reference.
 - Keep `AGENTS.md`, `CLAUDE.md`, `docs/DEVELOPMENT.md`, `docs/SAFETY.md`, README, and CHANGELOG aligned when project behavior changes.
 - Do not modify `scripts/` unless the task explicitly concerns legacy historical scripts.
 
