@@ -13,7 +13,7 @@ fail() {
 bash -n "$SCRIPT"
 
 help_output="$(bash "$SCRIPT" --help)"
-grep -q -- 'DistroLift Auto Upgrade' <<<"$help_output" || fail "help misses project name"
+grep -q -- 'DistroLift' <<<"$help_output" || fail "help misses project name"
 grep -q -- '--stable-only' <<<"$help_output" || fail "help misses --stable-only"
 grep -q -- '--allow-testing' <<<"$help_output" || fail "help misses --allow-testing"
 grep -q -- '--preflight' <<<"$help_output" || fail "help misses --preflight"
@@ -62,7 +62,7 @@ eval "get_os_id() { echo ubuntu; }"
 eval "$orig_get_os_id"
 
 # Debian path should have exactly 1 dist-upgrade; Ubuntu path adds another (total 2 is valid)
-dist_upgrade_count="$(grep -c 'apt-get dist-upgrade' "$SCRIPT")"
+dist_upgrade_count="$(grep -Ec '(apt-get|run_apt_noninteractive) dist-upgrade' "$SCRIPT" || true)"
 [[ "$dist_upgrade_count" -le "2" ]] || fail "dist-upgrade should run at most once per upgrade path"
 
 if grep -q '^deb-src ' "$SCRIPT"; then
@@ -73,7 +73,10 @@ grep -q 'check_initramfs_health' "$SCRIPT" || fail "missing initramfs preflight"
 grep -q 'check_runtime_injection' "$SCRIPT" || fail "missing runtime injection check"
 grep -q 'debian-archive-keyring' "$SCRIPT" || fail "missing keyring update before source switch"
 grep -q 'ubuntu-keyring' "$SCRIPT" || fail "missing Ubuntu keyring recovery"
-grep -Fq '[trusted=yes]' "$SCRIPT" || fail "missing GPG error recovery path"
+if grep -Fq '[trusted=yes]' "$SCRIPT"; then
+    fail "production path must not bypass APT signature verification"
+fi
+grep -q '拒绝自动绕过签名检查' "$SCRIPT" || fail "missing safe GPG failure path"
 grep -q 'MIN_PHYSICAL_MEM_MB' "$SCRIPT" || fail "missing low-memory resource gate"
 grep -q 'prepare_temporary_swap' "$SCRIPT" || fail "missing temporary swap helper"
 grep -q 'REQUIRE_CONFIRM' "$SCRIPT" || fail "missing stable upgrade confirmation override"
@@ -518,10 +521,10 @@ else
     pres_fail "Preservation 3.6c: self_update_mode missing backup logic"
 fi
 
-# Check replace logic (cat > realpath)
-has_replace=$(echo "$self_update_body" | grep -c 'cat.*realpath\|> .*(realpath' || echo 0)
+# Check direct or atomic replace logic.
+has_replace=$(echo "$self_update_body" | grep -Ec 'cat.*realpath|> .*\(realpath|mv -f .*script_path' || true)
 if (( has_replace > 0 )); then
-    pres_pass "Preservation 3.6d: self_update_mode has replace logic (cat to realpath)"
+    pres_pass "Preservation 3.6d: self_update_mode has script replacement logic"
 else
     pres_fail "Preservation 3.6d: self_update_mode missing replace logic"
 fi
@@ -544,6 +547,80 @@ if (( PRES_TESTS_FAILED > 0 )); then
 fi
 
 # ── Final Summary ────────────────────────────────────────────────────────────
+grep -A8 '^run_apt_noninteractive()' "$SCRIPT" \
+    | grep -q '\$USE_SUDO env DEBIAN_FRONTEND=noninteractive apt-get' \
+    || fail "sudo apt helper does not preserve DEBIAN_FRONTEND"
+if grep -q 'DEBIAN_FRONTEND=noninteractive \$USE_SUDO apt-get' "$SCRIPT"; then
+    fail "legacy noninteractive apt invocation remains"
+fi
+grep -A70 '^cleanup_mode()' "$SCRIPT" | grep -q "mapfile -d '' -t old_configs" \
+    || fail "cleanup does not use NUL-delimited paths"
+grep -A70 '^cleanup_mode()' "$SCRIPT" | grep -q 'rm -f -- "\$f"' \
+    || fail "cleanup does not quote each obsolete config path"
+grep -A100 '^self_update_mode()' "$SCRIPT" | grep -q '拒绝自更新降级' \
+    || fail "self-update does not reject downgrades"
+grep -A130 '^self_update_mode()' "$SCRIPT" | grep -q 'sha256sum' \
+    || fail "self-update does not verify fixed-tag hashes"
+grep -A130 '^self_update_mode()' "$SCRIPT" | grep -q 'primary_hash.*cdn_hash' \
+    || fail "self-update does not require GitHub/CDN content agreement"
+grep -A100 '^self_update_mode()' "$SCRIPT" | grep -q 'raw.githubusercontent.com.*${tag}/distro_upgrade.sh' \
+    || fail "self-update primary URL is not pinned to a tag"
+grep -A100 '^self_update_mode()' "$SCRIPT" | grep -q 'jsdelivr.net.*@${tag}/distro_upgrade.sh' \
+    || fail "self-update CDN URL is not pinned to a tag"
+prep_block=$(sed -n '/^pre_upgrade_preparation()/,/^[a-zA-Z_][a-zA-Z0-9_]*() *{/p' "$SCRIPT")
+printf '%s\n' "$prep_block" | grep -q 'if ! .*dpkg --configure -a' \
+    || fail "pre-upgrade does not stop when dpkg configure fails"
+printf '%s\n' "$prep_block" | grep -q 'if ! run_apt_noninteractive --fix-broken' \
+    || fail "pre-upgrade does not stop when fix-broken fails"
+printf '%s\n' "$prep_block" | grep -q 'if ! audit_output=.*dpkg --audit' \
+    || fail "pre-upgrade does not distinguish dpkg audit command failure"
+grep -q '^backup_primary_sources_list()' "$SCRIPT" \
+    || fail "missing guarded primary sources backup helper"
+[[ "$(grep -c 'backup_primary_sources_list.*sources.list.backup' "$SCRIPT")" -eq 2 ]] \
+    || fail "Debian and Ubuntu do not both guard primary sources backup"
+grep -A25 '^self_update_mode()' "$SCRIPT" | grep -q 'RUN_DIR/self-update-main.sh' \
+    || fail "self-update main temporary file is outside RUN_DIR"
+
+# Main sources must be backed up before pre_upgrade_preparation can edit backports.
+for upgrade_func in main_upgrade ubuntu_upgrade; do
+    upgrade_block=$(sed -n "/^${upgrade_func}()/,/^[a-zA-Z_][a-zA-Z0-9_]*() *{/p" "$SCRIPT")
+    source_backup_line=$(printf '%s\n' "$upgrade_block" | grep -n 'backup_primary_sources_list' | head -1 | cut -d: -f1)
+    preparation_line=$(printf '%s\n' "$upgrade_block" | grep -n 'pre_upgrade_preparation' | head -1 | cut -d: -f1)
+    [[ -n "$source_backup_line" && -n "$preparation_line" && "$source_backup_line" -lt "$preparation_line" ]] \
+        || fail "$upgrade_func does not back up primary sources before source cleanup"
+done
+
+# LVM on one physical disk resolves safely to that disk.
+orig_findmnt=$(declare -f findmnt 2>/dev/null || true)
+orig_lsblk=$(declare -f lsblk 2>/dev/null || true)
+orig_readlink=$(declare -f readlink 2>/dev/null || true)
+findmnt() { echo /dev/mapper/vg-root; }
+readlink() { echo "$2"; }
+lsblk() {
+    if [[ " $* " == *" -s "* ]]; then
+        printf '/dev/mapper/vg-root lvm\n/dev/vda2 part\n/dev/vda disk\n'
+    else
+        printf '/dev/vda disk\n'
+    fi
+}
+[[ "$(detect_boot_disk)" == "/dev/vda" ]] || fail "LVM boot disk did not resolve to /dev/vda"
+
+# mdraid spanning multiple disks must not guess a GRUB target.
+lsblk() {
+    if [[ " $* " == *" -s "* ]]; then
+        printf '/dev/md0 raid1\n/dev/vda1 part\n/dev/vda disk\n/dev/vdb1 part\n/dev/vdb disk\n'
+    else
+        printf '/dev/vda disk\n/dev/vdb disk\n'
+    fi
+}
+[[ -z "$(detect_boot_disk)" ]] || fail "multi-disk RAID topology selected an arbitrary boot disk"
+if [[ -n "$orig_findmnt" ]]; then eval "$orig_findmnt"; else unset -f findmnt; fi
+if [[ -n "$orig_lsblk" ]]; then eval "$orig_lsblk"; else unset -f lsblk; fi
+if [[ -n "$orig_readlink" ]]; then eval "$orig_readlink"; else unset -f readlink; fi
+
+grep -A20 '^get_grub_target()' "$SCRIPT" | grep -q '拒绝自动修复' \
+    || fail "unknown architectures still fall back to x86 GRUB"
+
 printf '\n══ Overall Test Summary ══\n'
 printf '  Bug Exploration: %d passed, %d failed\n' "$BUG_TESTS_PASSED" "$BUG_TESTS_FAILED"
 printf '  Preservation:    %d passed, %d failed\n' "$PRES_TESTS_PASSED" "$PRES_TESTS_FAILED"

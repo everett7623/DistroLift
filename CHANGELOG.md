@@ -1,12 +1,59 @@
 # 更新日志
 
-本文件记录 DistroLift Auto Upgrade 的正式版本变更。
+本文件记录 DistroLift 的正式版本变更。
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本编号与 README 的版本历史保持一致。
 
 ## 未发布
 
-- 暂无。
+### 变更
+
+- 项目展示名称统一为 DistroLift，仓库地址同步迁移到 `everett7623/DistroLift`。
+- 当前生产入口保留为 `distro_upgrade.sh`；`debian_upgrade.sh` 仅作为兼容转发入口。
+- README 快速开始增加 GitHub Raw 默认下载命令，并保留 jsDelivr CDN 作为备用下载方式。
+
+### 修复
+
+- 将运行时临时目录、网络配置备份目录和被禁用软件源的标记统一为 `distrolift` 命名，消除旧项目名残留。
+
+## v3.8.0 - 2026-07-13
+
+### 安全
+
+- APT 签名失败时拒绝自动绕过签名验证，要求管理员从可信渠道恢复软件源和密钥环。
+- 在清理 backports 或附加源之前备份原始 `/etc/apt/sources.list`，备份失败时停止升级。
+- `dpkg --audit` 命令失败或仍存在未完成状态时，在切换软件源前停止。
+- 未知架构不再回退到 x86 GRUB 目标，避免对未验证平台执行错误修复。
+
+### 修复
+
+- 使用 `findmnt` 和 `lsblk` 解析分区、LVM、device-mapper 与 mdraid 的物理父磁盘。
+- 多磁盘拓扑无法唯一确定引导盘时不再自动猜测 GRUB 安装目标。
+
+## v3.7.7 - 2026-07-12
+
+### Fixed
+
+- Stop before changing APT sources when dpkg configuration, dependency repair, or the final dpkg audit fails.
+- Refuse to overwrite an existing `/etc/apt/sources.list` when its backup cannot be created.
+- Keep self-update temporary downloads in the per-run directory so EXIT cleanup removes interrupted downloads.
+
+## v3.7.6 - 2026-07-12
+
+### Fixed
+
+- Continue temporary swap and systemd unit cleanup even if APT source restoration fails.
+- Arm APT source restoration before writing temporary `[trusted=yes]` entries.
+- Reject self-update downgrades and require matching SHA-256 hashes from a fixed Git tag on GitHub and CDN.
+
+## v3.7.5 - 2026-07-11
+
+### Fixed
+
+- Restore APT signature verification after temporary `[trusted=yes]` recovery, including abnormal exits.
+- Pass `DEBIAN_FRONTEND=noninteractive` through `sudo` explicitly.
+- Preserve arbitrary filename boundaries while removing obsolete dpkg configuration files.
+- Require TLS 1.2+ downloads and atomically replace the script during self-update.
 
 ## v3.7.4 - 2026-07-04
 
@@ -40,7 +87,7 @@
 
 ### 变更
 
-- 项目展示名称从 Debian / Ubuntu Auto Upgrade Tool 更新为 DistroLift Auto Upgrade，弱化旧 Debian-only 命名。
+- 项目展示名称从 Debian / Ubuntu Auto Upgrade Tool 更新为 DistroLift，弱化旧 Debian-only 命名。
 - 帮助页、README 和 AI 工具文档同步新项目名与当前开发进度。
 
 ## v3.7 - 2026-07-04

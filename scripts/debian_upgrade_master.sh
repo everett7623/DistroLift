@@ -16,7 +16,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # GitHub仓库信息（需要修改为实际的仓库地址）
-GITHUB_REPO="everett7623/debian-auto-upgrade"
+GITHUB_REPO="everett7623/DistroLift"
 GITHUB_BRANCH="main"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/$GITHUB_REPO/$GITHUB_BRANCH"
 

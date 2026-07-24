@@ -54,6 +54,7 @@ cp distro_upgrade.sh README.md CHANGELOG.md docs/*.md tests/smoke.sh "$backup_di
 - 稳定版相邻升级默认自动继续，减少无人值守场景的交互阻塞。
 - Debian testing 或其他高风险路径必须显式启用并保留强确认。
 - 所有高风险检查必须发生在切换 `/etc/apt/sources.list` 之前。
+- 切源前的 dpkg 修复和主源备份属于硬门槛，不得以 `|| true` 降级为最佳努力。
 - 小内存 / NAT VPS 先判断是否合理升级；过低内存、磁盘不足或 `/boot` 不足时直接停止。
 - 低内存但仍合理的 VPS 可以自动创建临时 Swap，并在脚本退出时清理。
 - Debian 与 Ubuntu 的锁等待、keyring、APT 恢复、initramfs、GRUB 刷新和网络核对逻辑应尽量共享，避免双路径漂移。

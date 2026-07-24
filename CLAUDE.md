@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current Project State
 
-- Project display name: DistroLift Auto Upgrade.
-- Current production script: `distro_upgrade.sh` v3.7.4 (`SCRIPT_DATE=2026-07-04`), about 2260 lines.
+- Project display name: DistroLift.
+- Current production script: `distro_upgrade.sh` v3.8.0 (`SCRIPT_DATE=2026-07-13`), about 2400 lines.
 - Production scope: Debian 11 -> 12 -> 13 and Ubuntu LTS 20.04 -> 22.04 -> 24.04 -> 26.04.
 - Ubuntu 26.04 codename is `resolute`.
 - Stable adjacent upgrades are automation-first and continue by default; use `--require-confirm` to restore manual confirmation.

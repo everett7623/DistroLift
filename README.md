@@ -1,17 +1,17 @@
-# 🚀 DistroLift Auto Upgrade
+# 🚀 DistroLift
 
 > 面向 Debian 与 Ubuntu LTS 的智能逐级升级工具，支持 VPS / NAT VPS 环境优化、保守预检、失败诊断与逐级升级策略
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![GitHub release](https://img.shields.io/github/release/everett7623/debian-auto-upgrade.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
-[![CI](https://github.com/everett7623/debian-auto-upgrade/actions/workflows/ci.yml/badge.svg)](https://github.com/everett7623/debian-auto-upgrade/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/release/everett7623/DistroLift.svg)](https://github.com/everett7623/DistroLift/releases)
+[![CI](https://github.com/everett7623/DistroLift/actions/workflows/ci.yml/badge.svg)](https://github.com/everett7623/DistroLift/actions/workflows/ci.yml)
 [![Debian](https://img.shields.io/badge/Debian-11--13-red.svg)](https://www.debian.org/)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-LTS-orange.svg)](https://ubuntu.com/)
 [![Bash](https://img.shields.io/badge/Language-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Version](https://img.shields.io/badge/Version-3.7.4-brightgreen.svg)](https://github.com/everett7623/debian-auto-upgrade/releases)
-![Visitors](https://visitor-badge.laobi.icu/badge?page_id=everett7623.debian-auto-upgrade)
+[![Version](https://img.shields.io/badge/Version-3.8.0-brightgreen.svg)](https://github.com/everett7623/DistroLift/releases)
+![Visitors](https://visitor-badge.laobi.icu/badge?page_id=everett7623.DistroLift)
 
-**DistroLift Auto Upgrade** 是面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS / NAT VPS 环境深度优化，失败时会停止流程、保留日志并给出修复方向。
+**DistroLift** 是面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS / NAT VPS 环境深度优化，失败时会停止流程、保留日志并给出修复方向。
 
 > ⚠️ 默认执行升级时，第一屏会先在 SSH 中显示 DistroLift 脚本信息、用途、项目提示和风险清单，并要求输入 `YES` 确认。确认后才开始系统检查，稳定版升级会尽量自动完成，减少后续交互。请先创建整机快照、单独备份业务数据，并准备云厂商控制台、VNC 或串口控制台。
 
@@ -54,17 +54,31 @@
 
 ### 一键安装运行
 
+默认从 GitHub Raw 下载：
+
 ```bash
-wget -O distro_upgrade.sh https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh && sudo bash distro_upgrade.sh
+wget -O distro_upgrade.sh https://raw.githubusercontent.com/everett7623/DistroLift/main/distro_upgrade.sh && sudo bash distro_upgrade.sh
 ```
 
 如果没有 `wget`，使用 `curl`：
 
 ```bash
-curl -fsSL -o distro_upgrade.sh https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh && sudo bash distro_upgrade.sh
+curl -fsSL -o distro_upgrade.sh https://raw.githubusercontent.com/everett7623/DistroLift/main/distro_upgrade.sh && sudo bash distro_upgrade.sh
 ```
 
-> 默认使用 jsDelivr CDN，避免很多 VPS 访问 GitHub Raw 时卡在 IPv6。脚本会在正式升级前显示风险提示并要求确认。
+如果 GitHub Raw 访问缓慢或连接失败，使用 jsDelivr CDN：
+
+```bash
+wget -O distro_upgrade.sh https://cdn.jsdelivr.net/gh/everett7623/DistroLift@main/distro_upgrade.sh && sudo bash distro_upgrade.sh
+```
+
+对应的 `curl` 命令：
+
+```bash
+curl -fsSL -o distro_upgrade.sh https://cdn.jsdelivr.net/gh/everett7623/DistroLift@main/distro_upgrade.sh && sudo bash distro_upgrade.sh
+```
+
+> 默认使用 GitHub Raw；部分 VPS 的 IPv6 出站异常时，可能长时间停在连接阶段，此时请改用 jsDelivr CDN。脚本会在正式升级前显示风险提示并要求确认。
 
 ### 基本用法
 
@@ -88,7 +102,7 @@ sudo bash distro_upgrade.sh --version
 sudo bash distro_upgrade.sh --help
 ```
 
-兼容性说明：仓库保留 `debian_upgrade.sh` 兼容入口，会自动转发到 `distro_upgrade.sh`。
+命名说明：当前生产入口为 `distro_upgrade.sh`；运行时临时目录、网络配置备份目录和被禁用软件源的标记均使用 `distrolift` 名称。仓库保留 `debian_upgrade.sh` 兼容入口，它会自动转发到 `distro_upgrade.sh`，请在新部署中使用当前入口。
 
 ## 📖 命令参数
 
@@ -310,14 +324,14 @@ sudo bash distro_upgrade.sh --self-update
 
 ```bash
 wget -O distro_upgrade.sh \
-  https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh
+  https://cdn.jsdelivr.net/gh/everett7623/DistroLift@main/distro_upgrade.sh
 ```
 
 如果 CDN 也卡住，再尝试强制 IPv4：
 
 ```bash
 wget -4 -T 20 -t 2 -O distro_upgrade.sh \
-  https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh
+  https://cdn.jsdelivr.net/gh/everett7623/DistroLift@main/distro_upgrade.sh
 ```
 
 ### ❓ apt-get update 报 404 或缺少 Release 文件
@@ -454,8 +468,8 @@ systemctl status networking systemd-networkd NetworkManager
 ## 📞 支持
 
 - 📧 邮件：[everett7623@gmail.com](mailto:everett7623@gmail.com)
-- 🐛 问题反馈：[GitHub Issues](https://github.com/everett7623/debian-auto-upgrade/issues)
-- 💬 讨论区：[GitHub Discussions](https://github.com/everett7623/debian-auto-upgrade/discussions)
+- 🐛 问题反馈：[GitHub Issues](https://github.com/everett7623/DistroLift/issues)
+- 💬 讨论区：[GitHub Discussions](https://github.com/everett7623/DistroLift/discussions)
 
 ---
 
@@ -467,10 +481,14 @@ systemctl status networking systemd-networkd NetworkManager
 
 | 版本 | 日期 | 主要变更 |
 |------|------|----------|
+| **v3.8.0** | 2026-07-13 | VPS 存储拓扑与密钥安全加固：拒绝绕过 APT 签名验证、切源前保存原始主源、支持 LVM/dm/mdraid 父磁盘解析、多磁盘和未知架构不自动猜测 GRUB 目标 |
+| **v3.7.7** | 2026-07-12 | 切源前状态保护：dpkg/损坏依赖修复失败时停止、已有主源备份失败时拒绝覆盖、自更新临时文件统一清理 |
+| **v3.7.6** | 2026-07-12 | 失败路径与自更新信任加固：APT 恢复失败不阻断退出清理、消除临时信任状态窗口、拒绝降级并校验固定 tag 双源哈希 |
+| **v3.7.5** | 2026-07-11 | 安全与可靠性加固：异常退出恢复 APT 签名验证、sudo 非交互环境传递、特殊文件名安全清理、自更新原子替换 |
 | **v3.7.4** | 2026-07-04 | 默认升级入口第一屏先显示 DistroLift 脚本信息、用途、风险清单和 `YES` 确认；确认后再开始系统检查 |
 | **v3.7.3** | 2026-07-04 | `--preflight` 恢复为安静预检；默认升级入口显示 DistroLift 脚本信息、用途、项目提示和风险确认；README 主命令简化为一行下载并执行 |
 | **v3.7.2** | 2026-07-04 | 调整启动风险页结构，拆分 DistroLift 菜单展示与真实升级 `YES` 确认 |
-| **v3.7.1** | 2026-07-04 | 项目展示名更新为 DistroLift Auto Upgrade；真实升级前新增集中风险确认页，确认一次后稳定版流程继续自动化 |
+| **v3.7.1** | 2026-07-04 | 项目展示名更新为 DistroLift；真实升级前新增集中风险确认页，确认一次后稳定版流程继续自动化 |
 | **v3.7** | 2026-07-04 | 自动化与 VPS 成功率优化：稳定版默认自动继续、低内存资源门槛、临时 Swap、Debian/Ubuntu 共用 apt 恢复、修正 Ubuntu 26.04 Resolute |
 | **v3.6** | 2026-06-10 | VPS 兼容性全面加固：ARM64 架构支持、容器自动识别、非交互终端安全降级、CDN 自更新回退、EFI 多路径检测、GPG 恢复路径修复；关联数组重构、日志拆分等 |
 | **v3.5** | 2026-06-10 | 新增 `--cleanup`（升级后五步清理）和 `--self-update`（从 GitHub 自动更新）；修复跨版本 GPG 签名验证和云镜像 initramfs 预检失败 |

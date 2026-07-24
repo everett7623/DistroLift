@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# 项目名称: DistroLift Auto Upgrade
+# 项目名称: DistroLift
 # 脚本名称: distro_upgrade.sh
 # 描    述: Debian / Ubuntu LTS 自动逐级升级工具
 #           生产入口支持 Debian 11~13 与 Ubuntu LTS 相邻升级
@@ -41,7 +41,7 @@
 #                     - 注释全面中文化，统一术语和表述
 #   v3.4.1 2026-06-10  紧急修复：跨版本升级 GPG 签名验证失败
 #                     - 切换软件源之前更新 debian-archive-keyring，确保包含目标版本的 GPG 密钥
-#                     - apt-get update 遇到 NO_PUBKEY 错误时，临时使用 [trusted=yes] 安装密钥环后恢复验证
+#                     - apt-get update 遇到 NO_PUBKEY 错误时，临时放宽签名验证以安装密钥环后恢复验证
 #   v3.4.2 2026-06-10  修复：云镜像 / 容器环境下 initramfs 预检因缺少 /var/tmp 失败
 #                     - mkinitramfs 内部 mktemp 依赖 /var/tmp，部分云镜像未预置该目录
 #                     - check_initramfs_health() 调用前确保 /var/tmp 存在
@@ -67,7 +67,7 @@
 #                     - Debian / Ubuntu 共用 apt update 恢复路径，Ubuntu 使用 ubuntu-keyring
 #                     - 修正 Ubuntu 26.04 LTS 代号为 resolute
 #   v3.7.1 2026-07-04  品牌与启动风险确认
-#                     - 项目展示名更名为 DistroLift Auto Upgrade
+#                     - 项目展示名更名为 DistroLift
 #                     - 真实升级前显示能力、适用范围和风险清单，确认一次后继续自动化流程
 #   v3.7.2 2026-07-04  调整启动风险页结构
 #                     - 将项目菜单与真实升级确认拆分，真实升级继续保留 YES 风险确认
@@ -77,6 +77,23 @@
 #   v3.7.4 2026-07-04  启动页前移到第一屏
 #                     - 默认升级入口先显示脚本信息、用途、风险和 YES 确认
 #                     - 用户确认后再执行系统检查，后续稳定版流程减少交互
+#   v3.7.5 2026-07-11  安全与可靠性加固
+#                     - APT 临时签名验证放宽状态在正常或异常退出时均恢复
+#                     - sudo 模式显式传递 DEBIAN_FRONTEND=noninteractive
+#                     - 清理模式安全处理特殊文件名，自更新改为原子替换
+#   v3.7.6 2026-07-12  失败路径与自更新信任加固
+#                     - APT 恢复失败不再阻断 swap 和 systemd 单元清理
+#                     - 消除 trusted=yes 写入与恢复状态标记之间的中断窗口
+#                     - 自更新拒绝降级，并校验固定 tag 的 GitHub/CDN 内容一致性
+#   v3.7.7 2026-07-12  切源前状态保护
+#                     - dpkg 配置和损坏依赖修复失败时在切源前停止
+#                     - 已有主 sources.list 备份失败时拒绝覆盖
+#                     - 自更新临时文件纳入统一运行目录清理
+#   v3.8.0 2026-07-13  VPS 存储拓扑与密钥安全加固
+#                     - 取消自动 trusted=yes 密钥环安装，签名失败时安全停止
+#                     - 原始主源在任何修改前备份，覆盖前不再重复备份
+#                     - 支持 LVM/dm/mdraid 父磁盘解析，多磁盘拓扑不自动猜测
+#                     - dpkg audit 命令失败硬阻断，未知架构拒绝 GRUB 修复
 # =============================================================================
 # 使用方法:
 #   sudo bash distro_upgrade.sh              # 正常升级（稳定版，默认）
@@ -99,16 +116,16 @@
 set -Ee -o pipefail
 
 # ── 脚本元信息 ────────────────────────────────────────────────────────────────
-PROJECT_NAME="DistroLift Auto Upgrade"
+PROJECT_NAME="DistroLift"
 PROJECT_SUBTITLE="Debian / Ubuntu LTS 自动逐级升级工具"
-SCRIPT_VERSION="3.7.4"
+SCRIPT_VERSION="3.8.0"
 SCRIPT_NAME="distro_upgrade.sh"
-SCRIPT_DATE="2026-07-04"
-SCRIPT_REPO="https://raw.githubusercontent.com/everett7623/debian-auto-upgrade/main/distro_upgrade.sh"
+SCRIPT_DATE="2026-07-13"
+SCRIPT_REPO="https://raw.githubusercontent.com/everett7623/DistroLift/main/distro_upgrade.sh"
 # GitHub 在国内可能被阻断，提供 CDN 回退地址
-SCRIPT_REPO_CDN="https://cdn.jsdelivr.net/gh/everett7623/debian-auto-upgrade@main/distro_upgrade.sh"
+SCRIPT_REPO_CDN="https://cdn.jsdelivr.net/gh/everett7623/DistroLift@main/distro_upgrade.sh"
 RUN_ID="$(date +%Y%m%d_%H%M%S)_$$"
-RUN_DIR="${TMPDIR:-/tmp}/debian-auto-upgrade-${RUN_ID}"
+RUN_DIR="${TMPDIR:-/tmp}/distrolift-${RUN_ID}"
 APT_UPDATE_LOG="${RUN_DIR}/apt-update.log"
 APT_UPGRADE_LOG="${RUN_DIR}/apt-upgrade.log"
 APT_DIST_UPGRADE_LOG="${RUN_DIR}/apt-dist-upgrade.log"
@@ -247,50 +264,44 @@ detect_boot_mode() {
     [[ -d /sys/firmware/efi ]] && echo "uefi" || echo "bios"
 }
 
-# ── 引导磁盘检测（多策略，兼容 NVMe / virtio / xen）────────────────────────
+# ── 引导磁盘检测（兼容分区、LVM、device-mapper、mdraid）─────────────────────
+get_physical_disks_for_device() {
+    local device="$1"
+    [[ -n "$device" ]] || return 0
+    device=$(readlink -f "$device" 2>/dev/null || printf '%s' "$device")
+    lsblk -s -n -p -o NAME,TYPE "$device" 2>/dev/null \
+        | awk '$2=="disk"{print $1}' | sort -u
+}
+
 detect_boot_disk() {
-    local disk=""
+    local source="" candidates=()
+    source=$(findmnt -n -o SOURCE /boot 2>/dev/null || true)
+    [[ -n "$source" ]] || source=$(findmnt -n -o SOURCE / 2>/dev/null || true)
 
-    # 策略1: /boot 分区所在磁盘
-    if mount | grep -q " /boot "; then
-        disk=$(mount | grep " /boot " | awk '{print $1}' \
-               | sed -E 's/p?[0-9]+$//' )
-        [[ -b "$disk" ]] && echo "$disk" && return
+    if [[ -n "$source" ]]; then
+        mapfile -t candidates < <(get_physical_disks_for_device "$source")
     fi
 
-    # 策略2: / 分区所在磁盘
-    disk=$(mount | grep -E "^/dev/.* / " | grep -v tmpfs \
-           | head -1 | awk '{print $1}' \
-           | sed -E 's/p?[0-9]+$//')
-    [[ -b "$disk" ]] && echo "$disk" && return
-
-    # 策略3: /proc/cmdline root=UUID 解析
-    if [[ -f /proc/cmdline ]]; then
-        local root_dev
-        root_dev=$(grep -o 'root=[^ ]*' /proc/cmdline | head -1 | sed 's/root=//')
-        if [[ "$root_dev" =~ ^UUID= ]]; then
-            local uuid="${root_dev#UUID=}"
-            disk=$($USE_SUDO blkid -U "$uuid" 2>/dev/null | sed -E 's/p?[0-9]+$//')
-        else
-            disk=$(echo "$root_dev" | sed -E 's/p?[0-9]+$//')
-        fi
-        [[ -b "$disk" ]] && echo "$disk" && return
+    if (( ${#candidates[@]} == 1 )); then
+        echo "${candidates[0]}"
+        return 0
+    fi
+    if (( ${#candidates[@]} > 1 )); then
+        log_warning "检测到多磁盘引导拓扑: ${candidates[*]}；不会自动选择 GRUB 安装磁盘"
+        echo ""
+        return 0
     fi
 
-    # 策略4: lsblk 找第一块有分区表的磁盘
-    while read -r name; do
-        local dev="/dev/$name"
-        if [[ -b "$dev" ]] && fdisk -l "$dev" 2>/dev/null | grep -q "Disklabel type"; then
-            echo "$dev" && return
-        fi
-    done < <(lsblk -d -n -o NAME,TYPE | awk '$2=="disk"{print $1}')
-
-    # 策略5: 常见设备名 fallback
-    for dev in /dev/sda /dev/vda /dev/xvda /dev/nvme0n1; do
-        [[ -b "$dev" ]] && echo "$dev" && return
-    done
-
-    echo ""
+    # 某些 VPS 的虚拟块设备没有完整父子关系；仅在系统中恰好只有一块磁盘时回退。
+    mapfile -t candidates < <(lsblk -d -n -p -o NAME,TYPE 2>/dev/null \
+        | awk '$2=="disk"{print $1}' | sort -u)
+    if (( ${#candidates[@]} == 1 )); then
+        echo "${candidates[0]}"
+    else
+        [[ ${#candidates[@]} -gt 1 ]] \
+            && log_warning "存在多块磁盘且无法确定引导盘，不进行自动选择"
+        echo ""
+    fi
 }
 
 # ── 配置镜像源（支持 --mirror 参数）─────────────────────────────────────────
@@ -487,7 +498,7 @@ get_current_version() {
 # ── 网络配置备份 ──────────────────────────────────────────────────────────────
 save_network_config() {
     local backup_dir
-    backup_dir="/root/debian_upgrade_backup_$(date +%Y%m%d_%H%M%S)"
+    backup_dir="/root/distrolift_backup_$(date +%Y%m%d_%H%M%S)"
     log_debug "备份网络配置到 $backup_dir"
     $USE_SUDO mkdir -p "$backup_dir/network"
     $USE_SUDO cp -a /etc/network/interfaces* "$backup_dir/network/" 2>/dev/null || true
@@ -669,7 +680,7 @@ prepare_temporary_swap() {
         return 1
     fi
 
-    TEMP_SWAP_FILE="${TEMP_SWAP_FILE:-/var/tmp/debian-auto-upgrade-${RUN_ID}.swap}"
+    TEMP_SWAP_FILE="${TEMP_SWAP_FILE:-/var/tmp/distrolift-${RUN_ID}.swap}"
     log_info "创建 ${needed}MB 临时 Swap: $TEMP_SWAP_FILE"
     $USE_SUDO rm -f "$TEMP_SWAP_FILE" 2>/dev/null || true
     if command -v fallocate >/dev/null 2>&1; then
@@ -725,7 +736,7 @@ clean_apt_sources() {
         while read -r src_file; do
             [[ -z "$src_file" ]] && continue
             log_warning "暂时禁用附加源: $src_file"
-            $USE_SUDO mv "$src_file" "${src_file}.disabled-by-debian-upgrade"
+            $USE_SUDO mv "$src_file" "${src_file}.disabled-by-distrolift"
         done < <(find /etc/apt/sources.list.d/ -maxdepth 1 -type f \
             \( -name "*.list" -o -name "*.sources" \) 2>/dev/null)
     fi
@@ -733,7 +744,7 @@ clean_apt_sources() {
     if [[ -f /etc/apt/sources.list ]]; then
         if grep -q "backports" /etc/apt/sources.list 2>/dev/null; then
             log_warning "注释掉 sources.list 中的 backports 行"
-            $USE_SUDO sed -i '/^[[:space:]]*deb.*backports/s/^/# disabled by debian-auto-upgrade: /' \
+            $USE_SUDO sed -i '/^[[:space:]]*deb.*backports/s/^/# disabled by distrolift: /' \
                 /etc/apt/sources.list
         fi
     fi
@@ -947,6 +958,27 @@ stop_apt_units() {
     done
 }
 
+run_apt_noninteractive() {
+    if [[ -n "$USE_SUDO" ]]; then
+        $USE_SUDO env DEBIAN_FRONTEND=noninteractive apt-get "$@"
+    else
+        DEBIAN_FRONTEND=noninteractive apt-get "$@"
+    fi
+}
+
+backup_primary_sources_list() {
+    local backup_path="$1"
+    if [[ ! -e /etc/apt/sources.list ]]; then
+        log_info "/etc/apt/sources.list 不存在，将创建新的主源文件"
+        return 0
+    fi
+    if ! $USE_SUDO cp -a /etc/apt/sources.list "$backup_path"; then
+        log_error "无法备份 /etc/apt/sources.list，已在覆盖前停止"
+        return 1
+    fi
+    log_info "已备份主软件源: $backup_path"
+}
+
 apt_update_with_recovery() {
     local keyring_pkg="$1"
     mkdir -p "$RUN_DIR"
@@ -958,22 +990,10 @@ apt_update_with_recovery() {
     log_warning "apt-get update 出现错误（见上），开始自动恢复..."
 
     if grep -q "NO_PUBKEY\|GPG error\|is not signed" "$APT_UPDATE_LOG"; then
-        log_warning "检测到 GPG 签名验证错误，尝试安装目标版本密钥环: $keyring_pkg"
-        $USE_SUDO sed -i -E 's|^deb[[:space:]]+|deb [trusted=yes] |' /etc/apt/sources.list
-        if ! $USE_SUDO apt-get -o Acquire::Languages=none update 2>/dev/null; then
-            $USE_SUDO sed -i 's/^deb \[trusted=yes\] /deb /' /etc/apt/sources.list
-            log_error "即使临时跳过签名验证，软件包列表更新仍然失败"
-            return 1
-        fi
-
-        DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get install -y "$keyring_pkg" 2>/dev/null || true
-        $USE_SUDO sed -i 's/^deb \[trusted=yes\] /deb /' /etc/apt/sources.list
-
-        if $USE_SUDO apt-get -o Acquire::Languages=none update; then
-            log_success "密钥环已更新，签名验证恢复正常"
-            return 0
-        fi
-        log_warning "签名验证已恢复，但更新仍有错误，继续尝试清理残留源"
+        log_error "检测到 APT 签名验证错误，已拒绝自动绕过签名检查"
+        log_error "密钥环包: $keyring_pkg"
+        log_error "请恢复原软件源并从可信渠道更新密钥环，确认后重新运行升级"
+        return 1
     fi
 
     if grep -q "404\|Release.*does not have\|does not have a Release file" "$APT_UPDATE_LOG"; then
@@ -987,7 +1007,7 @@ apt_update_with_recovery() {
             \( -name "*.list" -o -name "*.sources" \) 2>/dev/null \
             | while read -r f; do
                 log_warning "  禁用: $f"
-                $USE_SUDO mv "$f" "${f}.disabled-by-debian-upgrade" 2>/dev/null || true
+                $USE_SUDO mv "$f" "${f}.disabled-by-distrolift" 2>/dev/null || true
             done
     fi
 
@@ -1012,16 +1032,34 @@ pre_upgrade_preparation() {
     check_runtime_injection
     check_initramfs_health
 
-    # 修复 dpkg / 损坏依赖
+    # 修复 dpkg / 损坏依赖；失败时必须在切换软件源前停止。
     $USE_SUDO apt-get clean 2>/dev/null || true
-    $USE_SUDO dpkg --audit 2>/dev/null || true
-    $USE_SUDO dpkg --configure -a 2>/dev/null || true
-    DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get --fix-broken install -y 2>/dev/null || true
+    if ! $USE_SUDO dpkg --configure -a 2>&1 | tee "$APT_UPGRADE_LOG"; then
+        diagnose_upgrade_failure "$APT_UPGRADE_LOG"
+        log_error "dpkg 配置修复失败，尚未切换软件源"
+        return 1
+    fi
+    if ! run_apt_noninteractive --fix-broken install -y 2>&1 | tee "$APT_UPGRADE_LOG"; then
+        diagnose_upgrade_failure "$APT_UPGRADE_LOG"
+        log_error "损坏依赖修复失败，尚未切换软件源"
+        return 1
+    fi
+    local audit_output
+    if ! audit_output=$($USE_SUDO dpkg --audit 2>&1); then
+        log_error "dpkg 审计命令执行失败，尚未切换软件源"
+        printf '%s\n' "$audit_output" >&2
+        return 1
+    fi
+    if [[ -n "$audit_output" ]]; then
+        log_error "dpkg 仍有未完成状态，尚未切换软件源"
+        printf '%s\n' "$audit_output" >&2
+        return 1
+    fi
 
     # 关键步骤：先在当前源上刷新归档密钥环，降低切换源后的 NO_PUBKEY 风险。
     log_info "更新归档密钥环: $keyring_pkg"
     $USE_SUDO apt-get update 2>/dev/null || log_warning "当前源更新失败，跳过密钥环更新"
-    DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get install -y --reinstall "$keyring_pkg" 2>/dev/null || true
+    run_apt_noninteractive install -y --reinstall "$keyring_pkg" 2>/dev/null || true
 
     # 清理旧/无效 sources，避免 404
     clean_apt_sources "$target_codename"
@@ -1156,7 +1194,7 @@ show_project_intro_banner() {
 ╠════════════════════════════════════════════════════════════════════╣
 ║ 脚本信息:
 ║   • 版本: v${SCRIPT_VERSION} (${SCRIPT_DATE})
-║   • 项目: https://github.com/everett7623/debian-auto-upgrade
+║   • 项目: https://github.com/everett7623/DistroLift
 ║   • 支持: Debian 11/12/13，Ubuntu LTS 20.04/22.04/24.04/26.04
 ║   • 目标: 自动、稳妥、逐级完成主流 VPS 系统升级
 ║
@@ -1311,7 +1349,7 @@ EOF
 
 # ── 运行统计获取（visitor-badge.laobi.icu）───────────────────────────────────
 fetch_hit_stats() {
-    local url="https://visitor-badge.laobi.icu/badge?page_id=everett7623.debian-auto-upgrade"
+    local url="https://visitor-badge.laobi.icu/badge?page_id=everett7623.DistroLift"
     local response total
 
     # 尝试 curl（优先）或 wget 获取 SVG badge 响应
@@ -1584,13 +1622,14 @@ main_upgrade() {
     local backup_dir
     backup_dir=$(save_network_config)
 
+    # 必须在 clean_apt_sources 修改 backports 或附加源之前保存原始主源。
+    backup_primary_sources_list "/etc/apt/sources.list.backup.$(date +%s)"
+
     # 升级前准备（含清理无效源）
     pre_upgrade_preparation "$nxt_name" "debian"
 
     # ── 步骤 1：写入新 sources.list ──────────────────────────────────────────
     log_info "步骤 1/4: 更新软件源配置 → $nxt_name"
-    $USE_SUDO cp /etc/apt/sources.list \
-        "/etc/apt/sources.list.backup.$(date +%s)" 2>/dev/null || true
 
     local sec_suffix=""
     # Debian 11+ 安全源格式变为 codename-security
@@ -1619,7 +1658,7 @@ EOF
     log_info "步骤 3/4: 执行系统升级"
 
     log_info "  3.1 最小升级 (upgrade)..."
-    if ! DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get upgrade -y \
+    if ! run_apt_noninteractive upgrade -y \
         -o Dpkg::Options::="--force-confdef" \
         -o Dpkg::Options::="--force-confold" 2>&1 | tee "$APT_UPGRADE_LOG"; then
         log_error "最小升级失败，已停止；不会继续执行完整升级"
@@ -1628,7 +1667,7 @@ EOF
     fi
 
     log_info "  3.2 完整升级 (dist-upgrade)..."
-    if ! DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get dist-upgrade -y \
+    if ! run_apt_noninteractive dist-upgrade -y \
         -o Dpkg::Options::="--force-confdef" \
         -o Dpkg::Options::="--force-confold" 2>&1 | tee "$APT_DIST_UPGRADE_LOG"; then
         log_error "完整升级失败，已停止自动重试，避免重复执行同一故障"
@@ -1715,6 +1754,7 @@ ubuntu_upgrade() {
     # 升级前准备：资源门槛、锁等待、预检、依赖修复、禁用附加源
     local backup_dir
     backup_dir=$(save_network_config)
+    backup_primary_sources_list "/etc/apt/sources.list.backup.$(date +%s)"
     pre_upgrade_preparation "$nxt_codename" "ubuntu"
 
     # 确定 Ubuntu 镜像源
@@ -1726,8 +1766,6 @@ ubuntu_upgrade() {
 
     # ── 步骤 1: 备份并替换 sources.list ──────────────────────────────────────
     log_info "步骤 1/4: 更新软件源配置 → $nxt_codename"
-    $USE_SUDO cp /etc/apt/sources.list \
-        "/etc/apt/sources.list.backup.$(date +%s)" 2>/dev/null || true
 
     $USE_SUDO tee /etc/apt/sources.list > /dev/null << EOF
 # Ubuntu $nxt_version ($nxt_codename) - 由 $SCRIPT_NAME v$SCRIPT_VERSION 自动生成
@@ -1746,7 +1784,7 @@ EOF
     log_info "步骤 3/4: 执行系统升级"
 
     log_info "  3.1 最小升级 (upgrade)..."
-    if ! DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get upgrade -y \
+    if ! run_apt_noninteractive upgrade -y \
         -o Dpkg::Options::="--force-confdef" \
         -o Dpkg::Options::="--force-confold" 2>&1 | tee "$APT_UPGRADE_LOG"; then
         log_error "最小升级失败"
@@ -1755,7 +1793,7 @@ EOF
     fi
 
     log_info "  3.2 完整升级 (dist-upgrade)..."
-    if ! DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get dist-upgrade -y \
+    if ! run_apt_noninteractive dist-upgrade -y \
         -o Dpkg::Options::="--force-confdef" \
         -o Dpkg::Options::="--force-confold" 2>&1 | tee "$APT_DIST_UPGRADE_LOG"; then
         log_error "完整升级失败"
@@ -1828,8 +1866,8 @@ get_grub_target() {
         armv7l|armhf)
             echo "arm-efi|arm-efi|grub-efi-arm|grub-efi-arm" ;;
         *)
-            echo "x86_64-efi|i386-pc|grub-efi-amd64|grub-pc"
-            log_warning "未知架构 $arch，回退为 x86_64" ;;
+            log_error "架构 $arch 没有经过验证的 GRUB 修复目标，拒绝自动修复"
+            return 1 ;;
     esac
 }
 
@@ -1887,7 +1925,10 @@ fix_grub_mode() {
 
     # 解析 GRUB 目标架构
     local grub_info efi_target bios_target efi_pkg bios_pkg
-    grub_info=$(get_grub_target)
+    if ! grub_info=$(get_grub_target); then
+        log_error "无法为当前架构选择安全的 GRUB 目标"
+        return 1
+    fi
     efi_target=$(echo "$grub_info" | cut -d'|' -f1)
     bios_target=$(echo "$grub_info" | cut -d'|' -f2)
     efi_pkg=$(echo "$grub_info"    | cut -d'|' -f3)
@@ -1916,10 +1957,10 @@ fix_grub_mode() {
     # 重装 GRUB 包
     log_info "步骤 1: 重装 GRUB 包"
     if [[ "$boot_mode" == "uefi" ]]; then
-        DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get install --reinstall -y \
+        run_apt_noninteractive install --reinstall -y \
             "$efi_pkg" "${efi_pkg}-bin" grub2-common efibootmgr 2>/dev/null || true
     else
-        DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get install --reinstall -y \
+        run_apt_noninteractive install --reinstall -y \
             "$bios_pkg" "${bios_pkg}-bin" grub2-common 2>/dev/null || true
     fi
 
@@ -1987,7 +2028,7 @@ fix_only_mode() {
         diagnose_upgrade_failure "$APT_UPGRADE_LOG"
         return 1
     fi
-    if ! DEBIAN_FRONTEND=noninteractive $USE_SUDO apt-get --fix-broken install -y \
+    if ! run_apt_noninteractive --fix-broken install -y \
         2>&1 | tee "$APT_UPGRADE_LOG"; then
         diagnose_upgrade_failure "$APT_UPGRADE_LOG"
         return 1
@@ -2050,18 +2091,18 @@ cleanup_mode() {
 
     # 步骤 5: 清理旧的 dpkg 配置文件
     log_info "步骤 5/5: 清理旧配置文件..."
-    local old_configs
-    old_configs=$($USE_SUDO find /etc -maxdepth 5 \
+    local old_configs=()
+    mapfile -d '' -t old_configs < <($USE_SUDO find /etc -maxdepth 5 \
         \( -name "*.dpkg-old" -o -name "*.dpkg-dist" -o -name "*.dpkg-bak" \) \
-        -type f 2>/dev/null)
-    local config_count
-    config_count=$(echo "$old_configs" | grep -c '.' 2>/dev/null || echo 0)
+        -type f -print0 2>/dev/null)
+    local config_count="${#old_configs[@]}"
     if (( config_count > 0 )); then
         log_info "移除 $config_count 个旧配置文件:"
-        echo "$old_configs" | while read -r f; do
-            [[ -n "$f" ]] && log_debug "  移除: $f"
+        local f
+        for f in "${old_configs[@]}"; do
+            log_debug "  移除: $f"
+            $USE_SUDO rm -f -- "$f" 2>/dev/null || true
         done
-        echo "$old_configs" | xargs -r $USE_SUDO rm -f 2>/dev/null || true
     else
         log_info "无旧配置文件需清理"
     fi
@@ -2090,8 +2131,8 @@ self_update_mode() {
     log_info "🔄 检查并更新脚本"
     log_info "═══════════════════════════════════════════"
 
-    local tmp_file
-    tmp_file="$(mktemp)"
+    mkdir -p "$RUN_DIR"
+    local tmp_file="$RUN_DIR/self-update-main.sh"
     log_info "当前版本: v${SCRIPT_VERSION}"
 
     if ! command -v wget >/dev/null 2>&1; then
@@ -2105,10 +2146,10 @@ self_update_mode() {
 
     # 尝试主地址（GitHub），失败则使用 CDN 回退（国内网络更稳定）
     local download_url="$SCRIPT_REPO"
-    if ! wget -q --timeout=15 -O "$tmp_file" "$download_url" 2>/dev/null; then
+    if ! wget -q --https-only --secure-protocol=TLSv1_2 --timeout=15 -O "$tmp_file" "$download_url" 2>/dev/null; then
         log_warning "主地址下载失败，尝试 CDN 回退地址..."
         download_url="$SCRIPT_REPO_CDN"
-        if ! wget -q --timeout=30 -O "$tmp_file" "$download_url" 2>/dev/null; then
+        if ! wget -q --https-only --secure-protocol=TLSv1_2 --timeout=30 -O "$tmp_file" "$download_url" 2>/dev/null; then
             log_error "所有下载地址均失败，请检查网络或手动下载"
             log_error "  主地址: $SCRIPT_REPO"
             log_error "  CDN  :  $SCRIPT_REPO_CDN"
@@ -2119,7 +2160,7 @@ self_update_mode() {
 
     local remote_version
     remote_version=$(grep '^SCRIPT_VERSION=' "$tmp_file" | head -1 | cut -d'"' -f2)
-    if [[ -z "$remote_version" ]]; then
+    if [[ ! "$remote_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         log_error "无法解析远程版本，请手动下载: $download_url"
         rm -f "$tmp_file"
         return 1
@@ -2132,6 +2173,41 @@ self_update_mode() {
         rm -f "$tmp_file"
         return 0
     fi
+
+    if [[ "$(printf '%s\n%s\n' "$SCRIPT_VERSION" "$remote_version" | sort -V | head -1)" != "$SCRIPT_VERSION" ]]; then
+        log_error "拒绝自更新降级: v${SCRIPT_VERSION} → v${remote_version}"
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    command -v sha256sum >/dev/null 2>&1 || {
+        log_error "缺少 sha256sum，无法验证自更新内容"
+        rm -f "$tmp_file"
+        return 1
+    }
+
+    # main 仅用于发现版本；真正安装内容必须来自固定 tag，且 GitHub 与 CDN 哈希一致。
+    local tag="v${remote_version}"
+    local primary_tag_url="https://raw.githubusercontent.com/everett7623/DistroLift/${tag}/distro_upgrade.sh"
+    local cdn_tag_url="https://cdn.jsdelivr.net/gh/everett7623/DistroLift@${tag}/distro_upgrade.sh"
+    local primary_file cdn_file primary_hash cdn_hash
+    primary_file="$RUN_DIR/self-update-tag-primary.sh"
+    cdn_file="$RUN_DIR/self-update-tag-cdn.sh"
+    if ! wget -q --https-only --secure-protocol=TLSv1_2 --timeout=30 -O "$primary_file" "$primary_tag_url" 2>/dev/null \
+      || ! wget -q --https-only --secure-protocol=TLSv1_2 --timeout=30 -O "$cdn_file" "$cdn_tag_url" 2>/dev/null; then
+        log_error "无法从 GitHub 与 CDN 同时取得固定版本 $tag，已拒绝更新"
+        rm -f "$tmp_file" "$primary_file" "$cdn_file"
+        return 1
+    fi
+    primary_hash=$(sha256sum "$primary_file" | awk '{print $1}')
+    cdn_hash=$(sha256sum "$cdn_file" | awk '{print $1}')
+    if [[ "$primary_hash" != "$cdn_hash" ]]; then
+        log_error "固定版本 $tag 的 GitHub/CDN 内容不一致，已拒绝更新"
+        rm -f "$tmp_file" "$primary_file" "$cdn_file"
+        return 1
+    fi
+    mv -f "$primary_file" "$tmp_file"
+    rm -f "$cdn_file"
 
     # 预检远程脚本语法
     if ! bash -n "$tmp_file" 2>/dev/null; then
@@ -2146,9 +2222,12 @@ self_update_mode() {
     cp "$(realpath "$0")" "$backup" 2>/dev/null || true
     log_info "已备份当前版本: $backup"
 
-    # 替换并保持权限
-    cat "$tmp_file" > "$(realpath "$0")"
-    chmod +x "$(realpath "$0")"
+    # 在同一目录原子替换，避免写入中断留下半个脚本。
+    local replacement
+    replacement="$(dirname "$script_path")/.${SCRIPT_NAME}.update.$$"
+    cp "$tmp_file" "$replacement"
+    chmod --reference="$script_path" "$replacement"
+    mv -f "$replacement" "$script_path"
     rm -f "$tmp_file"
 
     log_success "═══════════════════════════════════════════"
@@ -2164,9 +2243,15 @@ preflight_mode() {
     check_runtime_injection
     check_initramfs_health
 
-    if $USE_SUDO dpkg --audit | grep -q .; then
+    local audit_output
+    if ! audit_output=$($USE_SUDO dpkg --audit 2>&1); then
+        log_error "dpkg 审计命令执行失败"
+        printf '%s\n' "$audit_output" >&2
+        return 1
+    fi
+    if [[ -n "$audit_output" ]]; then
         log_error "dpkg 检测到未完成配置的软件包，请先处理后再升级"
-        $USE_SUDO dpkg --audit >&2
+        printf '%s\n' "$audit_output" >&2
         return 1
     fi
 
