@@ -12,8 +12,8 @@ fail() {
 
 bash -n "$SCRIPT"
 
-script_version="$(sed -n 's/^SCRIPT_VERSION="\([^"]*\)"/\1/p' "$SCRIPT" | head -1)"
-script_date="$(sed -n 's/^SCRIPT_DATE="\([^"]*\)"/\1/p' "$SCRIPT" | head -1)"
+script_version="$(awk -F'"' '$1 == "SCRIPT_VERSION=" { print $2; exit }' "$SCRIPT")"
+script_date="$(awk -F'"' '$1 == "SCRIPT_DATE=" { print $2; exit }' "$SCRIPT")"
 [[ -n "$script_version" && -n "$script_date" ]] || fail "missing script version metadata"
 grep -Fq "Version-${script_version}-brightgreen" "${ROOT_DIR}/README.md" \
     || fail "README version badge does not match script"
@@ -98,8 +98,8 @@ grep -q 'REQUIRE_CONFIRM' "$SCRIPT" || fail "missing stable upgrade confirmation
 grep -q 'show_startup_risk_banner' "$SCRIPT" || fail "missing startup risk banner"
 grep -q 'show_initial_startup_banner' "$SCRIPT" || fail "missing first-screen startup banner"
 default_entry_block="$(awk '/# 默认 STABLE_ONLY=1/{capture=1} capture {print} /# OS 类型分流/{exit}' "$SCRIPT")"
-startup_line="$(grep -n 'show_initial_startup_banner' <<<"$default_entry_block" | head -1 | cut -d: -f1)"
-check_line="$(grep -n 'check_system' <<<"$default_entry_block" | head -1 | cut -d: -f1)"
+startup_line="$(grep -n -m1 'show_initial_startup_banner' <<<"$default_entry_block" | cut -d: -f1)"
+check_line="$(grep -n -m1 'check_system' <<<"$default_entry_block" | cut -d: -f1)"
 [[ -n "$startup_line" && -n "$check_line" && "$startup_line" -lt "$check_line" ]] \
     || fail "default startup banner must appear before system checks"
 if awk '/--preflight\)/{in_block=1} in_block && /show_project_intro_banner/{found=1} in_block && /;;/{exit(found ? 0 : 1)}' "$SCRIPT"; then
@@ -256,7 +256,7 @@ printf '\n─── Bug 1.4: 空引导磁盘 ───\n'
 check_upgrade_boot_line=$(sed -n '/^check_upgrade()/,/^[a-zA-Z_]*() *{/p' "$SCRIPT" \
     | grep '引导磁盘')
 
-if echo "$check_upgrade_boot_line" | grep -qF '${'; then
+if grep -qF '${' <<<"$check_upgrade_boot_line"; then
     # Uses parameter expansion (fixed pattern)
     bug_pass "Bug 1.4: check_upgrade uses parameter expansion for empty boot disk"
 else
@@ -273,9 +273,9 @@ printf '\n─── Bug 1.5: EFI 多 vfat 分区误判 ───\n'
 # Check if get_efi_dir's findmnt branch filters for "efi" in path
 # before taking head -1
 efi_findmnt_section=$(sed -n '/^get_efi_dir()/,/^}/p' "$SCRIPT" \
-    | sed -n '/findmnt/,/return/p' | head -10)
+    | sed -n '/findmnt/,/return/p' | sed -n '1,10p')
 
-if echo "$efi_findmnt_section" | grep -qi 'grep.*efi'; then
+if grep -qi 'grep.*efi' <<<"$efi_findmnt_section"; then
     bug_pass "Bug 1.5: get_efi_dir filters for 'efi' in findmnt output before head -1"
 else
     bug_fail "Bug 1.5: get_efi_dir() uses 'findmnt -t vfat | head -1' without filtering for efi path - picks first arbitrary vfat mount (e.g., USB) instead of ESP"
@@ -288,11 +288,11 @@ fi
 printf '\n─── Bug 1.6: self_update 权限检查 ───\n'
 
 # Check the first 15 lines of self_update_mode for a permission check
-func_head=$(sed -n '/^self_update_mode()/,/^[a-zA-Z_]*() *{/p' "$SCRIPT" | head -15)
+func_head=$(sed -n '/^self_update_mode()/,/^[a-zA-Z_]*() *{/p' "$SCRIPT" | sed -n '1,15p')
 
-if echo "$func_head" | grep -qE '\-w.*realpath|\-w.*\$0|check_root'; then
+if grep -qE '\-w.*realpath|\-w.*\$0|check_root' <<<"$func_head"; then
     bug_pass "Bug 1.6: self_update_mode has write permission check"
-elif echo "$func_head" | grep -qE '\[\[.*\-w'; then
+elif grep -qE '\[\[.*\-w' <<<"$func_head"; then
     bug_pass "Bug 1.6: self_update_mode checks write permission"
 else
     bug_fail "Bug 1.6: self_update_mode() has NO permission check - non-root user will fail at write step without clear error"
@@ -338,7 +338,7 @@ printf '\n══ Preservation Tests (must PASS on unfixed code) ══\n'
 # 1. autoremove, 2. rc cleanup, 3. old kernels, 4. APT cache, 5. dpkg config
 printf '\n─── Preservation 3.1: Cleanup flow ───\n'
 
-cleanup_body=$(sed -n '/^cleanup_mode()/,/^[a-zA-Z_]*() *{/p' "$SCRIPT" | head -80)
+cleanup_body=$(sed -n '/^cleanup_mode()/,/^[a-zA-Z_]*() *{/p' "$SCRIPT" | sed -n '1,80p')
 
 # Check all 5 steps exist and are in order by verifying step labels
 has_step1=$(echo "$cleanup_body" | grep -c '步骤 1/5' || echo 0)
@@ -367,11 +367,11 @@ else
 fi
 
 # Verify step order by checking line numbers
-step1_line=$(echo "$cleanup_body" | grep -n '步骤 1/5' | head -1 | cut -d: -f1)
-step2_line=$(echo "$cleanup_body" | grep -n '步骤 2/5' | head -1 | cut -d: -f1)
-step3_line=$(echo "$cleanup_body" | grep -n '步骤 3/5' | head -1 | cut -d: -f1)
-step4_line=$(echo "$cleanup_body" | grep -n '步骤 4/5' | head -1 | cut -d: -f1)
-step5_line=$(echo "$cleanup_body" | grep -n '步骤 5/5' | head -1 | cut -d: -f1)
+step1_line=$(grep -n -m1 '步骤 1/5' <<<"$cleanup_body" | cut -d: -f1)
+step2_line=$(grep -n -m1 '步骤 2/5' <<<"$cleanup_body" | cut -d: -f1)
+step3_line=$(grep -n -m1 '步骤 3/5' <<<"$cleanup_body" | cut -d: -f1)
+step4_line=$(grep -n -m1 '步骤 4/5' <<<"$cleanup_body" | cut -d: -f1)
+step5_line=$(grep -n -m1 '步骤 5/5' <<<"$cleanup_body" | cut -d: -f1)
 
 if (( step1_line < step2_line && step2_line < step3_line && step3_line < step4_line && step4_line < step5_line )); then
     pres_pass "Preservation 3.1c: cleanup steps are in correct sequential order (1<2<3<4<5)"
@@ -562,45 +562,46 @@ if (( PRES_TESTS_FAILED > 0 )); then
 fi
 
 # ── Final Summary ────────────────────────────────────────────────────────────
-grep -A8 '^run_apt_noninteractive()' "$SCRIPT" \
-    | grep -q '\$USE_SUDO env DEBIAN_FRONTEND=noninteractive apt-get' \
+run_apt_body=$(sed -n '/^run_apt_noninteractive()/,/^[a-zA-Z_][a-zA-Z0-9_]*() *{/p' "$SCRIPT")
+grep -q '\$USE_SUDO env DEBIAN_FRONTEND=noninteractive apt-get' <<<"$run_apt_body" \
     || fail "sudo apt helper does not preserve DEBIAN_FRONTEND"
 if grep -q 'DEBIAN_FRONTEND=noninteractive \$USE_SUDO apt-get' "$SCRIPT"; then
     fail "legacy noninteractive apt invocation remains"
 fi
-grep -A70 '^cleanup_mode()' "$SCRIPT" | grep -q "mapfile -d '' -t old_configs" \
+cleanup_mode_body=$(sed -n '/^cleanup_mode()/,/^[a-zA-Z_][a-zA-Z0-9_]*() *{/p' "$SCRIPT")
+grep -q "mapfile -d '' -t old_configs" <<<"$cleanup_mode_body" \
     || fail "cleanup does not use NUL-delimited paths"
-grep -A70 '^cleanup_mode()' "$SCRIPT" | grep -q 'rm -f -- "\$f"' \
+grep -q 'rm -f -- "\$f"' <<<"$cleanup_mode_body" \
     || fail "cleanup does not quote each obsolete config path"
-grep -A100 '^self_update_mode()' "$SCRIPT" | grep -q '拒绝自更新降级' \
+grep -q '拒绝自更新降级' <<<"$self_update_body" \
     || fail "self-update does not reject downgrades"
-grep -A130 '^self_update_mode()' "$SCRIPT" | grep -q 'sha256sum' \
+grep -q 'sha256sum' <<<"$self_update_body" \
     || fail "self-update does not verify fixed-tag hashes"
-grep -A130 '^self_update_mode()' "$SCRIPT" | grep -q 'primary_hash.*cdn_hash' \
+grep -q 'primary_hash.*cdn_hash' <<<"$self_update_body" \
     || fail "self-update does not require GitHub/CDN content agreement"
-grep -A100 '^self_update_mode()' "$SCRIPT" | grep -q 'raw.githubusercontent.com.*${tag}/distro_upgrade.sh' \
+grep -q 'raw.githubusercontent.com.*${tag}/distro_upgrade.sh' <<<"$self_update_body" \
     || fail "self-update primary URL is not pinned to a tag"
-grep -A100 '^self_update_mode()' "$SCRIPT" | grep -q 'jsdelivr.net.*@${tag}/distro_upgrade.sh' \
+grep -q 'jsdelivr.net.*@${tag}/distro_upgrade.sh' <<<"$self_update_body" \
     || fail "self-update CDN URL is not pinned to a tag"
 prep_block=$(sed -n '/^pre_upgrade_preparation()/,/^[a-zA-Z_][a-zA-Z0-9_]*() *{/p' "$SCRIPT")
-printf '%s\n' "$prep_block" | grep -q 'if ! .*dpkg --configure -a' \
+grep -q 'if ! .*dpkg --configure -a' <<<"$prep_block" \
     || fail "pre-upgrade does not stop when dpkg configure fails"
-printf '%s\n' "$prep_block" | grep -q 'if ! run_apt_noninteractive --fix-broken' \
+grep -q 'if ! run_apt_noninteractive --fix-broken' <<<"$prep_block" \
     || fail "pre-upgrade does not stop when fix-broken fails"
-printf '%s\n' "$prep_block" | grep -q 'if ! audit_output=.*dpkg --audit' \
+grep -q 'if ! audit_output=.*dpkg --audit' <<<"$prep_block" \
     || fail "pre-upgrade does not distinguish dpkg audit command failure"
 grep -q '^backup_primary_sources_list()' "$SCRIPT" \
     || fail "missing guarded primary sources backup helper"
 [[ "$(grep -c 'backup_primary_sources_list.*sources.list.backup' "$SCRIPT")" -eq 2 ]] \
     || fail "Debian and Ubuntu do not both guard primary sources backup"
-grep -A25 '^self_update_mode()' "$SCRIPT" | grep -q 'RUN_DIR/self-update-main.sh' \
+grep -q 'RUN_DIR/self-update-main.sh' <<<"$self_update_body" \
     || fail "self-update main temporary file is outside RUN_DIR"
 
 # Main sources must be backed up before pre_upgrade_preparation can edit backports.
 for upgrade_func in main_upgrade ubuntu_upgrade; do
     upgrade_block=$(sed -n "/^${upgrade_func}()/,/^[a-zA-Z_][a-zA-Z0-9_]*() *{/p" "$SCRIPT")
-    source_backup_line=$(printf '%s\n' "$upgrade_block" | grep -n 'backup_primary_sources_list' | head -1 | cut -d: -f1)
-    preparation_line=$(printf '%s\n' "$upgrade_block" | grep -n 'pre_upgrade_preparation' | head -1 | cut -d: -f1)
+    source_backup_line=$(grep -n -m1 'backup_primary_sources_list' <<<"$upgrade_block" | cut -d: -f1)
+    preparation_line=$(grep -n -m1 'pre_upgrade_preparation' <<<"$upgrade_block" | cut -d: -f1)
     [[ -n "$source_backup_line" && -n "$preparation_line" && "$source_backup_line" -lt "$preparation_line" ]] \
         || fail "$upgrade_func does not back up primary sources before source cleanup"
 done
@@ -633,7 +634,8 @@ if [[ -n "$orig_findmnt" ]]; then eval "$orig_findmnt"; else unset -f findmnt; f
 if [[ -n "$orig_lsblk" ]]; then eval "$orig_lsblk"; else unset -f lsblk; fi
 if [[ -n "$orig_readlink" ]]; then eval "$orig_readlink"; else unset -f readlink; fi
 
-grep -A20 '^get_grub_target()' "$SCRIPT" | grep -q '拒绝自动修复' \
+grub_target_body=$(sed -n '/^get_grub_target()/,/^[a-zA-Z_][a-zA-Z0-9_]*() *{/p' "$SCRIPT")
+grep -q '拒绝自动修复' <<<"$grub_target_body" \
     || fail "unknown architectures still fall back to x86 GRUB"
 
 printf '\n══ Overall Test Summary ══\n'
