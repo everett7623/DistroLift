@@ -38,6 +38,8 @@ help_output="$(bash "$SCRIPT" --help)"
 compat_help_output="$(bash "$COMPAT_SCRIPT" --help)"
 grep -q 'DistroLift' <<<"$help_output" || fail "help misses project name"
 [[ "$compat_help_output" == "$help_output" ]] || fail "compatibility wrapper does not forward help"
+grep -q 'exec bash .*distro_upgrade.sh' "$COMPAT_SCRIPT" \
+    || fail "compatibility wrapper depends on the main script executable bit"
 for option in --stable-only --allow-testing --preflight --cleanup --self-update \
     --require-confirm --auto-reboot; do
     grep -q -- "$option" <<<"$help_output" || fail "help misses $option"
