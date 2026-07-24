@@ -94,6 +94,10 @@
 #                     - 原始主源在任何修改前备份，覆盖前不再重复备份
 #                     - 支持 LVM/dm/mdraid 父磁盘解析，多磁盘拓扑不自动猜测
 #                     - dpkg audit 命令失败硬阻断，未知架构拒绝 GRUB 修复
+#   v3.8.1 2026-07-24  审查优化与自更新加固
+#                     - 命令行参数完整解析后再执行，组合选项不再受顺序影响
+#                     - 自更新校验固定标签版本，当前脚本备份失败时拒绝覆盖
+#                     - 移除运行时第三方访问统计，减少无关网络请求
 # =============================================================================
 # 使用方法:
 #   sudo bash distro_upgrade.sh              # 正常升级（稳定版，默认）
@@ -118,9 +122,9 @@ set -Ee -o pipefail
 # ── 脚本元信息 ────────────────────────────────────────────────────────────────
 PROJECT_NAME="DistroLift"
 PROJECT_SUBTITLE="Debian / Ubuntu LTS 自动逐级升级工具"
-SCRIPT_VERSION="3.8.0"
+SCRIPT_VERSION="3.8.1"
 SCRIPT_NAME="distro_upgrade.sh"
-SCRIPT_DATE="2026-07-13"
+SCRIPT_DATE="2026-07-24"
 SCRIPT_REPO="https://raw.githubusercontent.com/everett7623/DistroLift/main/distro_upgrade.sh"
 # GitHub 在国内可能被阻断，提供 CDN 回退地址
 SCRIPT_REPO_CDN="https://cdn.jsdelivr.net/gh/everett7623/DistroLift@main/distro_upgrade.sh"
@@ -262,6 +266,14 @@ get_user_confirmation() {
 # ── 启动模式检测 ──────────────────────────────────────────────────────────────
 detect_boot_mode() {
     [[ -d /sys/firmware/efi ]] && echo "uefi" || echo "bios"
+}
+
+has_separate_boot_mount() {
+    if command -v findmnt >/dev/null 2>&1; then
+        [[ "$(findmnt -n -o TARGET --target /boot 2>/dev/null)" == "/boot" ]]
+        return
+    fi
+    awk '$2=="/boot" {found=1} END {exit(found ? 0 : 1)}' /proc/mounts 2>/dev/null
 }
 
 # ── 引导磁盘检测（兼容分区、LVM、device-mapper、mdraid）─────────────────────
@@ -498,7 +510,7 @@ get_current_version() {
 # ── 网络配置备份 ──────────────────────────────────────────────────────────────
 save_network_config() {
     local backup_dir
-    backup_dir="/root/distrolift_backup_$(date +%Y%m%d_%H%M%S)"
+    backup_dir="/root/distrolift_backup_${RUN_ID}"
     log_debug "备份网络配置到 $backup_dir"
     $USE_SUDO mkdir -p "$backup_dir/network"
     $USE_SUDO cp -a /etc/network/interfaces* "$backup_dir/network/" 2>/dev/null || true
@@ -571,7 +583,7 @@ clean_old_kernels() {
 
     $USE_SUDO find /boot \( -name "*.old" -o -name "*.bak" \) -delete 2>/dev/null || true
 
-    if mount | grep -q " /boot "; then
+    if has_separate_boot_mount; then
         log_info "/boot 使用: $(df -h /boot | awk 'NR==2{print $5}') | 可用: $(df -h /boot | awk 'NR==2{print $4}')"
     fi
 }
@@ -638,7 +650,7 @@ check_upgrade_capacity() {
         return 1
     fi
 
-    if mount | grep -q " /boot "; then
+    if has_separate_boot_mount; then
         local boot_avail
         boot_avail=$(get_available_mb /boot)
         if (( boot_avail > 0 && boot_avail < MIN_BOOT_FREE_MB )); then
@@ -729,7 +741,7 @@ clean_apt_sources() {
 
     if [[ -d /etc/apt/sources.list.d ]]; then
         local bak_dir
-        bak_dir="/etc/apt/sources.list.d.bak_$(date +%s)"
+        bak_dir="/etc/apt/sources.list.d.bak_${RUN_ID}"
         $USE_SUDO cp -a /etc/apt/sources.list.d "$bak_dir"
         log_info "已备份 sources.list.d/ 到 $bak_dir"
 
@@ -771,7 +783,7 @@ check_system() {
     fi
 
     # /boot 分区空间
-    if mount | grep -q " /boot "; then
+    if has_separate_boot_mount; then
         local boot_kb
         boot_kb=$(df /boot | awk 'NR==2{print $4}')
         if (( boot_kb < 204800 )); then
@@ -1289,7 +1301,7 @@ show_help() {
 
 🔧 选项:
   -h, --help            显示此帮助
-    -v, --version         显示当前系统版本（Debian/Ubuntu）
+  -v, --version         显示当前系统版本（Debian/Ubuntu）
   -c, --check           检查是否有可用升级
   --preflight           执行升级前深度检查，不切换软件源
   -d, --debug           启用调试模式
@@ -1300,15 +1312,15 @@ show_help() {
   --force               跳过强制确认提示
   --require-confirm     稳定版升级也要求人工确认
   --auto-reboot         升级成功后自动重启（需提前确认控制台可用）
-    --stable-only         仅升级到稳定版（Debian 默认，跳过 testing）
-    --allow-testing       允许升级到 Debian 14 Forky（testing，仅 Debian）
+  --stable-only         仅升级到稳定版（Debian 默认，跳过 testing）
+  --allow-testing       允许升级到 Debian 14 Forky（testing，仅 Debian）
   --mirror <cn|tuna|ustc>  使用国内镜像源
 
 ✨ 功能特性:
-    ✅ 自动检测并逐级升级 Debian 11 → 12 → 13
-    ✅ 支持 Ubuntu LTS 相邻升级：20.04 → 22.04 → 24.04 → 26.04
-    ✅ 稳定版相邻升级默认自动继续，testing 仍需显式确认
-    ✅ 低内存 VPS 自动评估资源并按需创建临时 Swap
+  ✅ 自动检测并逐级升级 Debian 11 → 12 → 13
+  ✅ 支持 Ubuntu LTS 相邻升级：20.04 → 22.04 → 24.04 → 26.04
+  ✅ 稳定版相邻升级默认自动继续，testing 仍需显式确认
+  ✅ 低内存 VPS 自动评估资源并按需创建临时 Swap
   ✅ 升级前备份并禁用 backports / 第三方源
   ✅ 兼容 UEFI / BIOS，支持 NVMe、virtio、xen 磁盘
   ✅ 备份并核对网络接口，不自动改名或重启网络
@@ -1319,7 +1331,7 @@ show_help() {
 🔄 升级路径:
   Debian 11 (Bullseye) → 12 (Bookworm) → 13 (Trixie) [当前稳定版]
                          → 14 (Forky)    [testing，需 --allow-testing]
-    Ubuntu 20.04 (Focal) → 22.04 (Jammy) → 24.04 (Noble) → 26.04 (Resolute)
+  Ubuntu 20.04 (Focal) → 22.04 (Jammy) → 24.04 (Noble) → 26.04 (Resolute)
   Debian 8-10 的历史脚本仅供迁移研究，不属于当前生产支持范围
 
 💻 示例:
@@ -1343,33 +1355,8 @@ show_help() {
   • 极低内存或磁盘不足的 NAT VPS 会在切换软件源前停止
   • Debian 13 (Trixie) 为当前推荐稳定版，支持至 2030 年
   • Debian 14 (Forky) 处于 testing，不建议生产环境使用
-    • Ubuntu 仅支持 LTS 相邻升级，不执行跨代跳级
+  • Ubuntu 仅支持 LTS 相邻升级，不执行跨代跳级
 EOF
-}
-
-# ── 运行统计获取（visitor-badge.laobi.icu）───────────────────────────────────
-fetch_hit_stats() {
-    local url="https://visitor-badge.laobi.icu/badge?page_id=everett7623.DistroLift"
-    local response total
-
-    # 尝试 curl（优先）或 wget 获取 SVG badge 响应
-    if command -v curl >/dev/null 2>&1; then
-        response=$(curl -s --connect-timeout 3 --max-time 3 "$url" 2>/dev/null) || return 1
-    elif command -v wget >/dev/null 2>&1; then
-        response=$(wget -q --timeout=3 -O - "$url" 2>/dev/null) || return 1
-    else
-        return 1
-    fi
-
-    # 从 SVG badge 解析计数（visitor-badge 返回单个数字：总访问量）
-    # SVG 中的 <text> 元素包含数字
-    total=$(echo "$response" | grep -oP '<text[^>]*>\K\d+(?=</text>)' | tail -1)
-    # 兼容性：某些版本的 grep 无 -P 选项，回退到 sed
-    if [[ -z "$total" ]]; then
-        total=$(echo "$response" | sed -n 's/.*<text[^>]*>\([0-9]\+\)<\/text>.*/\1/p' | tail -1)
-    fi
-
-    [[ -n "$total" ]] && echo "$total" || return 1
 }
 
 # ── 检查升级状态 ──────────────────────────────────────────────────────────────
@@ -1417,7 +1404,7 @@ check_upgrade() {
     echo "  引导磁盘: ${_boot_disk:-未检测到}"
     echo "  根分区:   $(df -h / | awk 'NR==2{printf "已用 %s，可用 %s", $3, $4}')"
 
-    if mount | grep -q " /boot "; then
+    if has_separate_boot_mount; then
         echo "  /boot:    $(df -h /boot | awk 'NR==2{printf "已用 %s，可用 %s", $3, $4}')"
     fi
 
@@ -1472,13 +1459,6 @@ check_upgrade() {
         echo "  🛡️  保持稳定版推荐:   $0 --stable-only (默认)"
     fi
 
-    # 运行统计
-    local _stats
-    _stats=$(fetch_hit_stats 2>/dev/null) || _stats=""
-    if [[ -n "$_stats" ]]; then
-        echo "  📊 累计运行: ${_stats} 次"
-    fi
-
     echo "═══════════════════════════════════════════"
 }
 
@@ -1511,7 +1491,7 @@ check_upgrade_ubuntu() {
     echo "  引导磁盘: ${_boot_disk:-未检测到}"
     echo "  根分区:   $(df -h / | awk 'NR==2{printf "已用 %s，可用 %s", $3, $4}')"
 
-    if mount | grep -q " /boot "; then
+    if has_separate_boot_mount; then
         echo "  /boot:    $(df -h /boot | awk 'NR==2{printf "已用 %s，可用 %s", $3, $4}')"
     fi
 
@@ -1579,13 +1559,6 @@ main_upgrade() {
     log_info "${PROJECT_NAME} v${SCRIPT_VERSION}"
     log_info "当前: Debian $cur ($cur_name) [$cur_stat]"
 
-    # 运行统计
-    local _stats
-    _stats=$(fetch_hit_stats 2>/dev/null) || _stats=""
-    if [[ -n "$_stats" ]]; then
-        log_info "📊 累计运行: ${_stats} 次"
-    fi
-
     if [[ -z "$nxt" ]]; then
         log_success "🎉 已是最新稳定版本 Debian $cur"
         log_info "提示: 可用 --allow-testing 升级到 Debian 14 (forky) [testing]"
@@ -1623,7 +1596,7 @@ main_upgrade() {
     backup_dir=$(save_network_config)
 
     # 必须在 clean_apt_sources 修改 backports 或附加源之前保存原始主源。
-    backup_primary_sources_list "/etc/apt/sources.list.backup.$(date +%s)"
+    backup_primary_sources_list "/etc/apt/sources.list.backup.${RUN_ID}"
 
     # 升级前准备（含清理无效源）
     pre_upgrade_preparation "$nxt_name" "debian"
@@ -1733,13 +1706,6 @@ ubuntu_upgrade() {
     log_info "${PROJECT_NAME} v${SCRIPT_VERSION}"
     log_info "当前: Ubuntu $version_id ($cur_codename)"
 
-    # 运行统计
-    local _stats
-    _stats=$(fetch_hit_stats 2>/dev/null) || _stats=""
-    if [[ -n "$_stats" ]]; then
-        log_info "📊 累计运行: ${_stats} 次"
-    fi
-
     if [[ -z "$nxt_version" ]]; then
         log_success "🎉 已是最新支持的 LTS 版本 Ubuntu $version_id ($cur_codename)"
         exit 0
@@ -1754,7 +1720,7 @@ ubuntu_upgrade() {
     # 升级前准备：资源门槛、锁等待、预检、依赖修复、禁用附加源
     local backup_dir
     backup_dir=$(save_network_config)
-    backup_primary_sources_list "/etc/apt/sources.list.backup.$(date +%s)"
+    backup_primary_sources_list "/etc/apt/sources.list.backup.${RUN_ID}"
     pre_upgrade_preparation "$nxt_codename" "ubuntu"
 
     # 确定 Ubuntu 镜像源
@@ -1891,9 +1857,11 @@ get_efi_dir() {
     if command -v findmnt >/dev/null 2>&1; then
         local esp
         # 优先选择路径包含 efi/EFI 的 vfat 挂载点
-        esp=$(findmnt -n -o TARGET -t vfat 2>/dev/null | grep -i "efi" | head -1)
+        esp=$(findmnt -n -o TARGET -t vfat 2>/dev/null \
+            | awk 'tolower($0) ~ /efi/ && !found {print; found=1}')
         # 回退：取第一个 vfat 挂载（兼容只有单一 ESP 的系统）
-        [[ -z "$esp" ]] && esp=$(findmnt -n -o TARGET -t vfat 2>/dev/null | head -1)
+        [[ -z "$esp" ]] && esp=$(findmnt -n -o TARGET -t vfat 2>/dev/null \
+            | awk 'NR==1 {print}')
         [[ -n "$esp" ]] && echo "$esp" && return
     fi
     # 方式2: 检查常见路径
@@ -1901,7 +1869,7 @@ get_efi_dir() {
         [[ -d "$d" ]] && echo "$d" && return
     done
     # 方式3: /etc/fstab 查找 vfat 挂载
-    awk '$3=="vfat" && /\/boot|\/efi/{print $2}' /etc/fstab 2>/dev/null | head -1
+    awk '$3=="vfat" && /\/boot|\/efi/{print $2; exit}' /etc/fstab 2>/dev/null
 }
 
 # ── GRUB 专项修复模式 ─────────────────────────────────────────────────────────
@@ -2118,6 +2086,11 @@ cleanup_mode() {
 }
 
 # ── 脚本自更新 ──────────────────────────────────────────────────────────────────
+get_script_version_from_file() {
+    local file="$1"
+    awk -F'"' '$1 == "SCRIPT_VERSION=" {print $2; exit}' "$file" 2>/dev/null
+}
+
 self_update_mode() {
     local script_path
     script_path="$(realpath "$0")"
@@ -2159,7 +2132,7 @@ self_update_mode() {
     fi
 
     local remote_version
-    remote_version=$(grep '^SCRIPT_VERSION=' "$tmp_file" | head -1 | cut -d'"' -f2)
+    remote_version=$(get_script_version_from_file "$tmp_file")
     if [[ ! "$remote_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         log_error "无法解析远程版本，请手动下载: $download_url"
         rm -f "$tmp_file"
@@ -2174,7 +2147,7 @@ self_update_mode() {
         return 0
     fi
 
-    if [[ "$(printf '%s\n%s\n' "$SCRIPT_VERSION" "$remote_version" | sort -V | head -1)" != "$SCRIPT_VERSION" ]]; then
+    if [[ "$(printf '%s\n%s\n' "$SCRIPT_VERSION" "$remote_version" | sort -V | awk 'NR==1 {print}')" != "$SCRIPT_VERSION" ]]; then
         log_error "拒绝自更新降级: v${SCRIPT_VERSION} → v${remote_version}"
         rm -f "$tmp_file"
         return 1
@@ -2190,7 +2163,7 @@ self_update_mode() {
     local tag="v${remote_version}"
     local primary_tag_url="https://raw.githubusercontent.com/everett7623/DistroLift/${tag}/distro_upgrade.sh"
     local cdn_tag_url="https://cdn.jsdelivr.net/gh/everett7623/DistroLift@${tag}/distro_upgrade.sh"
-    local primary_file cdn_file primary_hash cdn_hash
+    local primary_file cdn_file primary_hash cdn_hash fixed_version
     primary_file="$RUN_DIR/self-update-tag-primary.sh"
     cdn_file="$RUN_DIR/self-update-tag-cdn.sh"
     if ! wget -q --https-only --secure-protocol=TLSv1_2 --timeout=30 -O "$primary_file" "$primary_tag_url" 2>/dev/null \
@@ -2206,6 +2179,12 @@ self_update_mode() {
         rm -f "$tmp_file" "$primary_file" "$cdn_file"
         return 1
     fi
+    fixed_version=$(get_script_version_from_file "$primary_file")
+    if [[ "$fixed_version" != "$remote_version" ]]; then
+        log_error "固定版本 $tag 的脚本元数据为 v${fixed_version:-未知}，已拒绝更新"
+        rm -f "$tmp_file" "$primary_file" "$cdn_file"
+        return 1
+    fi
     mv -f "$primary_file" "$tmp_file"
     rm -f "$cdn_file"
 
@@ -2218,16 +2197,24 @@ self_update_mode() {
 
     # 备份当前脚本
     local backup
-    backup="$(dirname "$(realpath "$0")")/${SCRIPT_NAME}.v${SCRIPT_VERSION}.bak"
-    cp "$(realpath "$0")" "$backup" 2>/dev/null || true
+    backup="$(dirname "$script_path")/${SCRIPT_NAME}.v${SCRIPT_VERSION}.${RUN_ID}.bak"
+    if ! cp -p -- "$script_path" "$backup" 2>/dev/null; then
+        log_error "无法备份当前脚本，已拒绝覆盖: $backup"
+        rm -f "$tmp_file"
+        return 1
+    fi
     log_info "已备份当前版本: $backup"
 
     # 在同一目录原子替换，避免写入中断留下半个脚本。
     local replacement
     replacement="$(dirname "$script_path")/.${SCRIPT_NAME}.update.$$"
-    cp "$tmp_file" "$replacement"
-    chmod --reference="$script_path" "$replacement"
-    mv -f "$replacement" "$script_path"
+    if ! cp -- "$tmp_file" "$replacement" \
+      || ! chmod --reference="$script_path" "$replacement" \
+      || ! mv -f -- "$replacement" "$script_path"; then
+        rm -f -- "$replacement" "$tmp_file"
+        log_error "脚本原子替换失败，当前版本未被完整更新"
+        return 1
+    fi
     rm -f "$tmp_file"
 
     log_success "═══════════════════════════════════════════"
@@ -2288,33 +2275,34 @@ main() {
     export LC_ALL=C LANG=C
     trap 'error_recovery $?' ERR
 
-    # 解析参数
+    local action_modes=()
+    local action_options=()
+    local mode os_id v vi codename status distro
+
+    # 先完整解析所有参数，避免动作参数的位置改变其他选项的行为。
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -h|--help)    show_help; exit 0 ;;
-            -v|--version)
-                local os_id v vi
-                os_id=$(get_os_id)
-                v=$(get_current_version)
-                vi=$(get_version_info "$v" "$os_id")
-                if [[ "$os_id" == "ubuntu" ]]; then
-                    echo "Ubuntu $v ($(echo "$vi"|cut -d'|' -f1)) [$(echo "$vi"|cut -d'|' -f2)]"
-                else
-                    echo "Debian $v ($(echo "$vi"|cut -d'|' -f1)) [$(echo "$vi"|cut -d'|' -f2)]"
-                fi
-                exit 0 ;;
-            -c|--check)   check_upgrade; exit 0 ;;
-            --preflight)
-                check_root
-                check_system
-                preflight_mode
-                exit 0
+            -h|--help)
+                action_modes+=("help")
+                action_options+=("$1")
+                shift
                 ;;
-            --cleanup)    check_root; check_system; cleanup_mode; exit 0 ;;
-            --self-update) self_update_mode; exit 0 ;;
+            -v|--version)
+                action_modes+=("version")
+                action_options+=("$1")
+                shift
+                ;;
+            -c|--check)
+                action_modes+=("check")
+                action_options+=("$1")
+                shift
+                ;;
+            --preflight|--cleanup|--self-update|--fix-only|--fix-grub)
+                action_modes+=("${1#--}")
+                action_options+=("$1")
+                shift
+                ;;
             -d|--debug)   export DEBUG=1; log_debug "调试模式已启用"; shift ;;
-            --fix-only)   check_root; check_system; fix_only_mode; exit 0 ;;
-            --fix-grub)   check_root; fix_grub_mode; exit 0 ;;
             --force)      export FORCE=1; log_warning "强制模式：跳过强制确认"; shift ;;
             --require-confirm) export REQUIRE_CONFIRM=1; shift ;;
             --auto-reboot) export AUTO_REBOOT=1; shift ;;
@@ -2329,8 +2317,63 @@ main() {
         esac
     done
 
+    if (( ${#action_modes[@]} > 1 )); then
+        log_error "动作参数只能指定一个: ${action_options[*]}"
+        return 1
+    fi
+
     # 默认 STABLE_ONLY=1（安全优先）
     export STABLE_ONLY="${STABLE_ONLY:-1}"
+
+    mode="${action_modes[0]:-upgrade}"
+    case "$mode" in
+        help)
+            show_help
+            return 0
+            ;;
+        version)
+            os_id=$(get_os_id)
+            v=$(get_current_version)
+            vi=$(get_version_info "$v" "$os_id")
+            IFS='|' read -r codename status <<<"$vi"
+            [[ "$os_id" == "ubuntu" ]] && distro="Ubuntu" || distro="Debian"
+            echo "$distro $v ($codename) [$status]"
+            return 0
+            ;;
+        check)
+            set_mirror
+            check_upgrade
+            return 0
+            ;;
+        preflight)
+            set_mirror
+            check_root
+            check_system
+            preflight_mode
+            return 0
+            ;;
+        cleanup)
+            check_root
+            check_system
+            cleanup_mode
+            return 0
+            ;;
+        self-update)
+            self_update_mode
+            return 0
+            ;;
+        fix-only)
+            check_root
+            check_system
+            fix_only_mode
+            return 0
+            ;;
+        fix-grub)
+            check_root
+            fix_grub_mode
+            return 0
+            ;;
+    esac
 
     show_initial_startup_banner
     set_mirror
@@ -2338,8 +2381,7 @@ main() {
     check_system
 
     # OS 类型分流：Ubuntu 走 ubuntu_upgrade，Debian 走 main_upgrade
-    local os_id
-    os_id=$(grep "^ID=" /etc/os-release 2>/dev/null | cut -d'=' -f2 | tr -d '"')
+    os_id=$(get_os_id)
     if [[ "$os_id" == "ubuntu" ]]; then
         ubuntu_upgrade
     else

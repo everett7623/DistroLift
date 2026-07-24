@@ -3,13 +3,11 @@
 > 面向 Debian 与 Ubuntu LTS 的智能逐级升级工具，支持 VPS / NAT VPS 环境优化、保守预检、失败诊断与逐级升级策略
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![GitHub release](https://img.shields.io/github/release/everett7623/DistroLift.svg)](https://github.com/everett7623/DistroLift/releases)
 [![CI](https://github.com/everett7623/DistroLift/actions/workflows/ci.yml/badge.svg)](https://github.com/everett7623/DistroLift/actions/workflows/ci.yml)
 [![Debian](https://img.shields.io/badge/Debian-11--13-red.svg)](https://www.debian.org/)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-LTS-orange.svg)](https://ubuntu.com/)
 [![Bash](https://img.shields.io/badge/Language-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Version](https://img.shields.io/badge/Version-3.8.0-brightgreen.svg)](https://github.com/everett7623/DistroLift/releases)
-![Visitors](https://visitor-badge.laobi.icu/badge?page_id=everett7623.DistroLift)
+[![Version](https://img.shields.io/badge/Version-3.8.1-brightgreen.svg)](https://github.com/everett7623/DistroLift/releases)
 
 **DistroLift** 是面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS / NAT VPS 环境深度优化，失败时会停止流程、保留日志并给出修复方向。
 
@@ -20,7 +18,7 @@
 - 🔄 **逐级安全升级** — 主脚本支持 Debian 11 → 12 → 13 与 Ubuntu LTS 相邻升级，避免跨版本风险
 - 🛡️ **智能版本管控** — 默认阻止意外升级到不稳定版本，`--stable-only` 模式保障生产安全
 - 🌍 **国内镜像支持** — 一键切换阿里云 / 清华 / 中科大镜像源，国内 VPS 推荐使用
-- 📡 **CDN 自更新** — `--self-update` GitHub 不可达时自动回退 jsDelivr CDN
+- 📡 **安全自更新** — 固定版本标签并比对 GitHub / jsDelivr 内容，备份成功后才原子替换
 - 🔧 **APT 源安全处理** — 同时识别 `.list` 与 Deb822 `.sources`，升级前备份并暂时禁用附加源
 - 🔒 **APT 锁安全等待** — 等待 APT/dpkg 锁正常释放，不直接删除仍被进程占用的锁文件
 - 💾 **配置完整备份** — 升级前自动备份网络配置、APT 源等关键文件
@@ -123,6 +121,8 @@ sudo bash distro_upgrade.sh --help
 | `--stable-only` | 仅升级到稳定版（默认，推荐） |
 | `--allow-testing` | 允许 Debian 13 升级到 Debian 14 Forky（testing，仅 Debian） |
 | `--mirror <cn\|tuna\|ustc>` | 使用指定国内镜像源 |
+
+组合选项的顺序不影响结果，例如 `--check --mirror cn` 与 `--mirror cn --check` 等价；`--check`、`--preflight`、`--cleanup` 等动作参数一次只能指定一个。
 
 ## 💡 使用示例
 
@@ -480,7 +480,7 @@ systemctl status networking systemd-networkd NetworkManager
 
 ## 📚 版本与进度
 
-- 当前脚本版本：**v3.8.0**（2026-07-13）
+- 当前脚本版本：**v3.8.1**（2026-07-24）
 - 当前生产入口：`distro_upgrade.sh`
 - 当前维护范围：Debian 11 → 12 → 13、Ubuntu LTS 20.04 → 22.04 → 24.04 → 26.04
-- 未发布进度与完整历史统一记录在 [CHANGELOG.md](CHANGELOG.md)
+- 完整版本历史统一记录在 [CHANGELOG.md](CHANGELOG.md)

@@ -68,4 +68,6 @@ cp distro_upgrade.sh README.md CHANGELOG.md docs/*.md tests/smoke.sh "$backup_di
 - 至少验证官方源和一个镜像源；Ubuntu arm64 / ports 架构需验证 `ubuntu-ports`。
 - 验证低内存场景：可升级配置会创建临时 Swap，过低 NAT VPS 会在切源前停止。
 - 验证 `--require-confirm`、`--auto-reboot` 和默认自动稳定升级行为。
+- 验证组合选项顺序无关、多个动作参数会被拒绝，并检查兼容入口 `debian_upgrade.sh`。
+- 发布可供 `--self-update` 使用的新版本时，必须创建与 `SCRIPT_VERSION` 一致的固定 Git 标签。
 - 验证失败路径不会删除锁、修改网卡名或写入错误磁盘。

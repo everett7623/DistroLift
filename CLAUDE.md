@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Current Project State
 
 - Project display name: DistroLift.
-- Current production script: `distro_upgrade.sh` v3.8.0 (`SCRIPT_DATE=2026-07-13`), about 2400 lines.
+- Current production script: `distro_upgrade.sh` v3.8.1 (`SCRIPT_DATE=2026-07-24`), about 2300 lines.
 - Production scope: Debian 11 -> 12 -> 13 and Ubuntu LTS 20.04 -> 22.04 -> 24.04 -> 26.04.
 - Ubuntu 26.04 codename is `resolute`.
 - Stable adjacent upgrades are automation-first and continue by default; use `--require-confirm` to restore manual confirmation.
@@ -93,6 +93,7 @@ When adding a new Debian or Ubuntu release, update the mapping arrays, `SCRIPT_V
 - Do not auto-restore third-party repositories after upgrade.
 - Do not auto-rename network interfaces or restart network services.
 - Do not run `autoremove` automatically after the main upgrade.
+- Self-update must verify fixed-tag content and version metadata, and must not replace the current script when its backup fails.
 
 ## Development Workflow
 

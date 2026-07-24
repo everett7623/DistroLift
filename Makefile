@@ -6,11 +6,12 @@ check: syntax shellcheck test
 
 syntax:
 	@bash -n distro_upgrade.sh
+	@bash -n debian_upgrade.sh
 	@for file in scripts/*.sh tests/*.sh; do bash -n "$$file"; done
 
 shellcheck:
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck -x distro_upgrade.sh tests/*.sh; \
+		shellcheck -x distro_upgrade.sh debian_upgrade.sh tests/*.sh; \
 	else \
 		echo "shellcheck not installed; skipping static analysis"; \
 	fi
