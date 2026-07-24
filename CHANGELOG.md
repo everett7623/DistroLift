@@ -2,7 +2,7 @@
 
 本文件记录 DistroLift 的正式版本变更。
 
-格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本编号与 README 的版本历史保持一致。
+格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，当前版本与 README 的版本进度保持一致。
 
 ## 未发布
 
@@ -11,6 +11,8 @@
 - 项目展示名称统一为 DistroLift，仓库地址同步迁移到 `everett7623/DistroLift`。
 - 当前生产入口保留为 `distro_upgrade.sh`；`debian_upgrade.sh` 仅作为兼容转发入口。
 - README 快速开始增加 GitHub Raw 默认下载命令，并保留 jsDelivr CDN 作为备用下载方式。
+- 统一 README、CHANGELOG、AGENTS、CLAUDE 与脚本中的版本、日期、支持范围和签名安全策略。
+- README 只保留当前版本与进度摘要，完整版本历史统一由本文件维护。
 
 ### 修复
 
@@ -277,28 +279,18 @@
 
 ## 版本支持说明
 
-| 工具版本 | 主脚本 Debian 支持范围 | 说明 |
+| 工具版本 | 主脚本支持范围 | 状态 |
 |---|---|---|
-| 3.3.x | Debian 11-13 | 当前维护版本；Debian 14 仅实验性支持 |
-| 3.0.x-3.2.x | Debian 8-13 | 历史统一脚本版本 |
-| 2.x | Debian 8-12 | 历史版本，安全行为和版本状态可能已过时 |
-| 1.x | Debian 8-11 | 初始版本，不建议继续使用 |
+| 3.8.x | Debian 11-13；Ubuntu LTS 20.04-26.04 | 当前维护；Debian 14 仅实验性支持 |
+| 3.7.x | Debian 11-13；Ubuntu LTS 20.04-26.04 | 历史版本 |
+| 3.3.x-3.6.x | Debian 11-13 | 历史版本，不再维护 |
+| 1.x-3.2.x | 早期 Debian 升级路径 | 历史版本，不建议继续使用 |
 
 Debian 8-10 已进入归档范围。仓库 `scripts/` 中的分版本脚本仅供历史追踪和迁移设计参考，不作为当前生产入口。
 
-## 升级说明
+## 更新脚本
 
-### 从 v3.2 升级到 v3.3
-
-- 建议直接替换现有 `distro_upgrade.sh`。
-- 命令行参数保持兼容。
-- 第三方 `.list` 和 `.sources` 会在升级前备份并禁用。
-- 常规升级不再自动写入 MBR、重启网络或执行 `autoremove`。
-- 执行前仍应创建系统快照并确认控制台访问可用。
-
-### 从 v2.x 升级到 v3.x
-
-- v3 对升级流程和安全边界进行了较大调整。
-- 请重新阅读 README 的支持范围和升级前检查清单。
-- 不要沿用旧版脚本对 APT 锁、网络服务和 GRUB 的自动处理假设。
-- 生产使用前应在可回滚的 Debian 虚拟机中完成验证。
+- 优先使用 `--self-update`，或从仓库重新下载并替换根目录的 `distro_upgrade.sh`。
+- 从 v2.x 或早期 v3.x 更新时，重新阅读 README 的支持范围、安全边界和升级前检查清单。
+- 不要把 `scripts/` 下的历史脚本替换成当前生产入口。
+- 更新脚本不等于升级操作系统；执行系统升级前仍需快照、业务备份和带外控制台。

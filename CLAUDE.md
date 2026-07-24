@@ -53,13 +53,13 @@ main_upgrade() / ubuntu_upgrade()
        -> prepare_temporary_swap()
        -> check_runtime_injection()
        -> check_initramfs_health()
-       -> dpkg audit / configure / fix-broken best-effort
-       -> reinstall debian-archive-keyring or ubuntu-keyring
+       -> dpkg configure / fix-broken / audit hard gates
+       -> refresh debian-archive-keyring or ubuntu-keyring from current trusted sources
        -> clean_apt_sources()
        -> conservative GRUB debconf preset when a boot disk is detected
   -> write new /etc/apt/sources.list
   -> apt_update_with_recovery(keyring)
-       -> GPG/keyring recovery through temporary [trusted=yes]
+       -> stop on GPG/signature errors without bypassing verification
        -> 404 / Release-file recovery by disabling residual extra sources
   -> apt-get upgrade
   -> apt-get dist-upgrade
@@ -87,7 +87,7 @@ When adding a new Debian or Ubuntu release, update the mapping arrays, `SCRIPT_V
 - Never delete APT/dpkg lock files; only wait for locks.
 - Never write directly to boot sectors in the normal upgrade path.
 - Do not add `deb-src` lines to generated sources.
-- Keep `check_initramfs_health`, `check_runtime_injection`, keyring recovery, and `[trusted=yes]` recovery paths covered by tests.
+- Keep `check_initramfs_health`, `check_runtime_injection`, keyring refresh, and the GPG refusal path covered by tests.
 - Stable upgrades may be automatic, but high-risk testing upgrades still require explicit opt-in.
 - Do not auto-reboot unless `--auto-reboot` is set.
 - Do not auto-restore third-party repositories after upgrade.

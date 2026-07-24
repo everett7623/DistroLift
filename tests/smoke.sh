@@ -12,6 +12,21 @@ fail() {
 
 bash -n "$SCRIPT"
 
+script_version="$(sed -n 's/^SCRIPT_VERSION="\([^"]*\)"/\1/p' "$SCRIPT" | head -1)"
+script_date="$(sed -n 's/^SCRIPT_DATE="\([^"]*\)"/\1/p' "$SCRIPT" | head -1)"
+[[ -n "$script_version" && -n "$script_date" ]] || fail "missing script version metadata"
+grep -Fq "Version-${script_version}-brightgreen" "${ROOT_DIR}/README.md" \
+    || fail "README version badge does not match script"
+grep -Fq "当前脚本版本：**v${script_version}**（${script_date}）" "${ROOT_DIR}/README.md" \
+    || fail "README progress does not match script version/date"
+grep -Fq "## v${script_version} - ${script_date}" "${ROOT_DIR}/CHANGELOG.md" \
+    || fail "CHANGELOG release does not match script version/date"
+expected_guide_version="\`distro_upgrade.sh\` v${script_version} (\`SCRIPT_DATE=${script_date}\`)"
+for guide in "${ROOT_DIR}/AGENTS.md" "${ROOT_DIR}/CLAUDE.md"; do
+    grep -Fq "$expected_guide_version" "$guide" \
+        || fail "$(basename "$guide") version does not match script"
+done
+
 help_output="$(bash "$SCRIPT" --help)"
 grep -q -- 'DistroLift' <<<"$help_output" || fail "help misses project name"
 grep -q -- '--stable-only' <<<"$help_output" || fail "help misses --stable-only"

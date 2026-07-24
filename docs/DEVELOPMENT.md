@@ -57,11 +57,11 @@ cp distro_upgrade.sh README.md CHANGELOG.md docs/*.md tests/smoke.sh "$backup_di
 - 切源前的 dpkg 修复和主源备份属于硬门槛，不得以 `|| true` 降级为最佳努力。
 - 小内存 / NAT VPS 先判断是否合理升级；过低内存、磁盘不足或 `/boot` 不足时直接停止。
 - 低内存但仍合理的 VPS 可以自动创建临时 Swap，并在脚本退出时清理。
-- Debian 与 Ubuntu 的锁等待、keyring、APT 恢复、initramfs、GRUB 刷新和网络核对逻辑应尽量共享，避免双路径漂移。
+- Debian 与 Ubuntu 的锁等待、keyring 预刷新、APT 失败处理、initramfs、GRUB 刷新和网络核对逻辑应尽量共享，避免双路径漂移。
 
 ## 发布前检查
 
-- 更新 `SCRIPT_VERSION`、`SCRIPT_DATE` 和 `CHANGELOG.md`。
+- 更新 `SCRIPT_VERSION`、`SCRIPT_DATE` 和 `CHANGELOG.md`；smoke 测试会核对 README、AGENTS 与 CLAUDE 的版本元数据。
 - 核对 README 中的支持矩阵。
 - 同步 AI 工具文档：`AGENTS.md`、`CLAUDE.md`，并同步 `README.md`、`CHANGELOG.md`，确保版本、入口、支持矩阵、测试状态一致。
 - 在 Debian 与 Ubuntu LTS 的 BIOS / UEFI 虚拟机中分别测试。

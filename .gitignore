@@ -4,4 +4,5 @@
 .vscode/
 .DS_Store
 .claude/
+.codex/
 .codex-backups/
