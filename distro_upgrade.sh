@@ -98,6 +98,15 @@
 #                     - 命令行参数完整解析后再执行，组合选项不再受顺序影响
 #                     - 自更新校验固定标签版本，当前脚本备份失败时拒绝覆盖
 #                     - 移除运行时第三方访问统计，减少无关网络请求
+#   v3.8.2 2026-08-28  GRUB 升级中断修复与引导器受控写入
+#                     - 常规升级不再让 grub-pc 在 dist-upgrade 事务内执行 grub-install
+#                       （预设 install_devices 为空 + install_devices_empty=true），
+#                       grub-install 失败不再中断整机升级
+#                     - 升级完成后对唯一明确的 BIOS 引导盘做一次受控、全程记录日志的
+#                       grub-install；失败只告警并要求 --fix-grub，同时阻止自动/快速重启
+#                     - --fix-grub 检查 grub-install 真实退出码，失败不再假报成功，
+#                       按 GPT 缺 bios_grub / 文件系统不支持 blocklists / 设备无法解析归因
+#                     - 新增 grub-pc 配置失败的升级诊断分支
 # =============================================================================
 # 使用方法:
 #   sudo bash distro_upgrade.sh              # 正常升级（稳定版，默认）
@@ -122,9 +131,9 @@ set -Ee -o pipefail
 # ── 脚本元信息 ────────────────────────────────────────────────────────────────
 PROJECT_NAME="DistroLift"
 PROJECT_SUBTITLE="Debian / Ubuntu LTS 自动逐级升级工具"
-SCRIPT_VERSION="3.8.1"
+SCRIPT_VERSION="3.8.2"
 SCRIPT_NAME="distro_upgrade.sh"
-SCRIPT_DATE="2026-07-24"
+SCRIPT_DATE="2026-08-28"
 SCRIPT_REPO="https://raw.githubusercontent.com/everett7623/DistroLift/main/distro_upgrade.sh"
 # GitHub 在国内可能被阻断，提供 CDN 回退地址
 SCRIPT_REPO_CDN="https://cdn.jsdelivr.net/gh/everett7623/DistroLift@main/distro_upgrade.sh"
@@ -140,6 +149,11 @@ TEMP_SWAP_FILE=""
 TEMP_SWAP_CREATED=0
 STARTUP_RISK_CONFIRMED=0
 INTRO_BANNER_SHOWN=0
+# 升级前准备阶段探测的引导信息，供升级后受控写入引导器使用
+BOOT_MODE=""
+BOOT_DISK=""
+# 磁盘上的引导器尚未确认更新时置 1：阻止自动/快速重启并以非零码退出
+BOOTLOADER_ACTION_REQUIRED=0
 
 # ── VPS 资源门槛 ──────────────────────────────────────────────────────────────
 MIN_ROOT_FREE_MB="${MIN_ROOT_FREE_MB:-2048}"
@@ -943,7 +957,12 @@ diagnose_upgrade_failure() {
     [[ -f "$log_file" ]] || return 0
     KEEP_RUN_DIR=1
 
-    if grep -q 'hooks/fsck failed\|mkinitramfs_.*\/var\/adm\/' "$log_file"; then
+    if grep -q 'grub-pc.*post-installation script\|grub-install failure for\|correct your GRUB install devices\|GRUB install devices before proceeding' "$log_file"; then
+        log_error "失败来自 grub-pc 配置：grub-install 写引导盘失败，不是网络或 APT 问题"
+        log_error "软件包已基本升级到位，但 dpkg 事务中断，grub-pc 处于未配置状态"
+        log_error "排查真实报错: sudo grub-install --target=i386-pc --recheck /dev/<引导盘>"
+        log_error "修复: 确认引导盘可写后运行 sudo dpkg --configure -a，再运行 $0 --fix-grub"
+    elif grep -q 'hooks/fsck failed\|mkinitramfs_.*\/var\/adm\/' "$log_file"; then
         log_error "失败来自 initramfs fsck hook，不是网络或 APT 下载速度问题"
         log_error "若日志含 /var/adm/<UUID>，优先检查 /etc/ld.so.preload 和异常动态库注入"
         log_error "诊断命令: cat /etc/ld.so.preload; env --unset=LD_PRELOAD ldd /sbin/fsck"
@@ -956,6 +975,27 @@ diagnose_upgrade_failure() {
     fi
 
     log_error "完整日志保留于: $log_file"
+}
+
+# ── grub-install 失败归因（--fix-grub 与升级后受控写入共用）─────────────────
+diagnose_grub_install_failure() {
+    local log_file="$1"
+    local disk="${2:-引导盘}"
+    [[ -f "$log_file" ]] || return 0
+
+    if grep -qi 'no BIOS Boot Partition\|embedding is not possible\|will not proceed with blocklists' "$log_file"; then
+        log_error "原因: $disk 很可能是 GPT 分区表但缺少 bios_grub 分区，core.img 无法嵌入"
+        log_error "处理: 先做快照，再用 gdisk/parted 在盘首建一个约 1MiB、类型 EF02 (bios_grub) 的分区后重试"
+    elif grep -qi "doesn't support blocklists\|不支持块列表" "$log_file"; then
+        log_error "原因: /boot 所在文件系统（如 XFS/Btrfs）不支持 blocklists，且没有可用嵌入区"
+        log_error "处理: 需要独立的 ext4 /boot 分区，或补一个 bios_grub 分区后重试"
+    elif grep -qi 'cannot find a device\|failed to get canonical path\|does not exist\|Cannot determine' "$log_file"; then
+        log_error "原因: 目标设备路径无法解析（$disk 可能不是真实物理盘或已改名）"
+        log_error "处理: lsblk -o NAME,TYPE 确认物理盘名后再运行 $0 --fix-grub"
+    elif grep -qi '/boot/grub.*No such\|/boot.*not a directory\|cannot open .*grub.cfg' "$log_file"; then
+        log_error "原因: /boot 或 /boot/grub 结构缺失，或 /boot 未挂载"
+        log_error "处理: 确认 /boot 已挂载且可写后重试"
+    fi
 }
 
 stop_apt_units() {
@@ -1076,17 +1116,23 @@ pre_upgrade_preparation() {
     # 清理旧/无效 sources，避免 404
     clean_apt_sources "$target_codename"
 
-    # 检查并预设 GRUB 磁盘，避免升级时弹出交互提示
-    # 容器环境无需 GRUB，直接跳过
+    # GRUB 处理：常规升级流程内不写引导扇区。
+    # grub-pc 的 postinst 在 grub-pc/install_devices 非空时会执行 grub-install，
+    # 且 DEBIAN_FRONTEND=noninteractive 下 grub-install 失败会直接 exit 1，
+    # 中断整个 dist-upgrade 事务，让系统停在"升级到一半"的状态。
+    # 这里显式将 grub-pc 预设为"跳过安装、仅重建配置"，引导器写入交给升级后的
+    # verify_boot_loader 受控步骤或显式 --fix-grub。
+    BOOT_MODE=""
+    BOOT_DISK=""
     if is_container; then
         log_info "检测到容器环境，跳过 GRUB 磁盘检测和预设"
     else
-        local boot_mode boot_disk
-        boot_mode=$(detect_boot_mode)
-        boot_disk=$(detect_boot_disk)
+        BOOT_MODE=$(detect_boot_mode)
+        BOOT_DISK=$(detect_boot_disk)
+        log_info "启动模式: $BOOT_MODE | 引导磁盘: ${BOOT_DISK:-未检测到}"
 
-        if [[ -z "$boot_disk" ]]; then
-            log_warning "未自动检测到引导磁盘，升级后可能需手动修复 GRUB"
+        if [[ -z "$BOOT_DISK" ]]; then
+            log_warning "未自动检测到唯一引导磁盘，升级后需显式运行 --fix-grub 修复引导"
             if [[ "${REQUIRE_CONFIRM:-0}" == "1" && "${FORCE:-0}" != "1" ]]; then
                 if [[ -e /dev/tty ]]; then
                     read -p "是否继续升级？[y/N]: " -n 1 -r </dev/tty; echo
@@ -1098,18 +1144,89 @@ pre_upgrade_preparation() {
             else
                 log_warning "稳定版自动化模式将继续升级；请确保已准备控制台救援路径"
             fi
-        else
-            log_success "引导磁盘: $boot_disk（模式: $boot_mode）"
-            if [[ "$boot_mode" == "bios" ]]; then
-                printf "grub-pc grub-pc/install_devices multiselect %s\n" "$boot_disk" \
-                    | $USE_SUDO debconf-set-selections
-                echo "grub-pc grub-pc/install_devices_empty boolean false" \
-                    | $USE_SUDO debconf-set-selections
-            fi
+        fi
+
+        # 仅 BIOS + 已安装 grub-pc 时需要中和其 postinst 内的 grub-install
+        if [[ "$BOOT_MODE" == "bios" ]] \
+           && command -v debconf-set-selections >/dev/null 2>&1 \
+           && dpkg -l grub-pc 2>/dev/null | grep -q '^ii'; then
+            log_info "预设 grub-pc：升级期间仅重建 GRUB 配置，不在 dist-upgrade 事务内写引导扇区"
+            printf 'grub-pc grub-pc/install_devices multiselect \n' \
+                | $USE_SUDO debconf-set-selections 2>/dev/null \
+                || log_warning "debconf 预设失败，grub-pc 仍可能在升级中尝试 grub-install"
+            printf 'grub-pc grub-pc/install_devices_empty boolean true\n' \
+                | $USE_SUDO debconf-set-selections 2>/dev/null || true
         fi
     fi
 
     log_success "升级前准备完成"
+}
+
+# ── 升级后引导器校验与受控写入 ───────────────────────────────────────────────
+# 常规升级流程内 grub-pc 已被预设为跳过 grub-install（避免中断事务），
+# 这里在升级完成后，仅针对"唯一明确的 BIOS 引导磁盘"做一次受控、可追溯的
+# grub-install。任何不确定或失败都不阻断脚本，只置位 BOOTLOADER_ACTION_REQUIRED，
+# 告警并要求显式运行 --fix-grub，同时阻止自动/快速重启。
+verify_boot_loader() {
+    local boot_mode boot_disk
+    boot_mode="${BOOT_MODE:-}"
+    boot_disk="${BOOT_DISK:-}"
+    [[ -n "$boot_mode" ]] || boot_mode=$(detect_boot_mode)
+    [[ -n "$boot_disk" ]] || boot_disk=$(detect_boot_disk)
+
+    if [[ "$boot_mode" == "uefi" ]]; then
+        log_info "UEFI 引导：grub-efi 的 postinst 已按 ESP 处理，无需写 MBR"
+        return 0
+    fi
+
+    if ! command -v grub-install >/dev/null 2>&1; then
+        BOOTLOADER_ACTION_REQUIRED=1
+        log_warning "未找到 grub-install，磁盘上的 GRUB 尚未更新；请运行 $0 --fix-grub"
+        return 0
+    fi
+
+    local grub_info bios_target
+    if ! grub_info=$(get_grub_target); then
+        BOOTLOADER_ACTION_REQUIRED=1
+        log_warning "当前架构无经验证的 GRUB 目标，跳过自动写入；如需修复请运行 $0 --fix-grub"
+        return 0
+    fi
+    bios_target=$(echo "$grub_info" | cut -d'|' -f2)
+    if [[ "$bios_target" != "i386-pc" ]]; then
+        BOOTLOADER_ACTION_REQUIRED=1
+        log_warning "非 i386-pc BIOS 引导（target: $bios_target），跳过自动写入；请运行 $0 --fix-grub"
+        return 0
+    fi
+
+    if [[ -z "$boot_disk" ]]; then
+        BOOTLOADER_ACTION_REQUIRED=1
+        log_warning "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_warning "⚠️  未能确定唯一引导磁盘，磁盘上的 GRUB 尚未更新"
+        log_warning "⚠️  重启前必须显式运行: $0 --fix-grub"
+        log_warning "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        return 0
+    fi
+
+    mkdir -p "$RUN_DIR"
+    local grub_log="$RUN_DIR/grub-install-post.log"
+    log_info "受控写入 GRUB 到唯一引导磁盘: $boot_disk（target: $bios_target）"
+    if $USE_SUDO grub-install --target="$bios_target" --recheck "$boot_disk" \
+        >"$grub_log" 2>&1; then
+        log_success "GRUB 已写入 $boot_disk"
+        $USE_SUDO update-grub >/dev/null 2>&1 || true
+    else
+        KEEP_RUN_DIR=1
+        BOOTLOADER_ACTION_REQUIRED=1
+        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_error "⚠️  grub-install 写入 $boot_disk 失败"
+        log_error "⚠️  系统包已升级完成，但磁盘引导器仍是旧版本，重启前必须修复"
+        log_error "grub-install 输出:"
+        sed 's/^/    /' "$grub_log" >&2
+        diagnose_grub_install_failure "$grub_log" "$boot_disk"
+        log_error "修复: $0 --fix-grub"
+        log_error "完整日志: $grub_log"
+        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    fi
 }
 
 # ── 升级后修复 ────────────────────────────────────────────────────────────────
@@ -1136,13 +1253,16 @@ post_upgrade_fixes() {
         fi
     fi
 
-    # 发行版升级不应无条件重装引导器或写入 MBR，仅刷新配置。
     # 容器环境无需 GRUB 操作
     if is_container; then
         log_info "容器环境，跳过 GRUB 配置刷新"
-    elif command -v update-grub >/dev/null 2>&1; then
-        log_info "刷新 GRUB 配置（不写入磁盘引导区）"
-        $USE_SUDO update-grub || log_warning "GRUB 配置刷新失败，可稍后显式运行 --fix-grub"
+    else
+        if command -v update-grub >/dev/null 2>&1; then
+            log_info "刷新 GRUB 配置"
+            $USE_SUDO update-grub || log_warning "GRUB 配置刷新失败，可稍后显式运行 --fix-grub"
+        fi
+        # 升级期间已阻止 grub-pc 写引导扇区，这里做一次受控写入
+        verify_boot_loader
     fi
 
     # 保留自动安装的包，避免在刚完成升级时误删仍需人工核对的依赖。
@@ -1159,6 +1279,13 @@ safe_reboot() {
     echo "╔════════════════════════════════════════╗"
     echo "║           ⚠️  即将重启系统              ║"
     echo "╚════════════════════════════════════════╝"
+
+    if [[ "${BOOTLOADER_ACTION_REQUIRED:-0}" == "1" ]]; then
+        log_error "磁盘引导器尚未确认写入，已阻止自动/快速重启"
+        log_error "请先运行并确认成功: $0 --fix-grub"
+        return
+    fi
+
     if [[ "${AUTO_REBOOT:-0}" != "1" ]]; then
         if [[ -e /dev/tty ]]; then
             read -p "最后确认：确定要重启吗？[y/N]: " -n 1 -r </dev/tty; echo
@@ -1424,7 +1551,8 @@ check_upgrade() {
     echo "  系统负载: $load_avg"
 
     local broken
-    broken=$(dpkg --get-selections 2>/dev/null | grep -c "deinstall" || echo 0)
+    broken=$(dpkg --get-selections 2>/dev/null | grep -c "deinstall" || true)
+    [[ "$broken" =~ ^[0-9]+$ ]] || broken=0
     (( broken > 0 )) \
         && echo "  软件包:   ⚠️  发现 $broken 个问题包" \
         || echo "  软件包:   ✅ 正常"
@@ -1664,6 +1792,16 @@ EOF
         log_success "╚════════════════════════════════════════╝"
         echo
         log_info "📋 配置备份: $backup_dir"
+
+        if [[ "${BOOTLOADER_ACTION_REQUIRED:-0}" == "1" ]]; then
+            echo
+            log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            log_error "⚠️  软件包已升级到 Debian $nxt，但磁盘引导器(GRUB)尚未确认更新"
+            log_error "⚠️  重启前必须运行并确认成功: $0 --fix-grub"
+            log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 1
+        fi
+
         log_info "⚠️  如重启失败，执行: $0 --fix-grub"
 
         # 检查是否还有后续版本
@@ -1781,6 +1919,15 @@ EOF
         log_success "╚════════════════════════════════════════╝"
         echo
         log_info "📋 配置备份: $backup_dir"
+
+        if [[ "${BOOTLOADER_ACTION_REQUIRED:-0}" == "1" ]]; then
+            echo
+            log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            log_error "⚠️  软件包已升级到 Ubuntu $nxt_version，但磁盘引导器(GRUB)尚未确认更新"
+            log_error "⚠️  重启前必须运行并确认成功: $0 --fix-grub"
+            log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 1
+        fi
 
         # 检查是否还有后续版本
         local further="${UBUNTU_NEXT[$nxt_version]:-}"
@@ -1937,40 +2084,65 @@ fix_grub_mode() {
     $USE_SUDO grub-mkconfig -o /boot/grub/grub.cfg 2>/dev/null \
         || $USE_SUDO update-grub 2>/dev/null || true
 
-    # 安装 GRUB 到磁盘
-    if [[ -n "$boot_disk" ]]; then
-        log_info "步骤 3: 安装 GRUB 到 $boot_disk"
-        if [[ "$boot_mode" == "uefi" ]]; then
-            local efi_dir
-            efi_dir=$(get_efi_dir)
-            [[ -z "$efi_dir" ]] && efi_dir="/boot/efi"
-            log_info "EFI 目录: $efi_dir"
-            $USE_SUDO grub-install --target="$efi_target" \
-                --efi-directory="$efi_dir" \
-                --bootloader-id=debian \
-                --recheck --force 2>&1 | tail -3
+    # 安装 GRUB 到磁盘（检查 grub-install 真实退出码，不再用管道吞掉状态）
+    local grub_install_ok=1 grub_target_desc=""
+    mkdir -p "$RUN_DIR"
+    local grub_log="$RUN_DIR/grub-install-fix.log"
+    if [[ "$boot_mode" == "uefi" ]]; then
+        local efi_dir
+        efi_dir=$(get_efi_dir)
+        [[ -z "$efi_dir" ]] && efi_dir="/boot/efi"
+        grub_target_desc="ESP $efi_dir"
+        log_info "步骤 3: 安装 GRUB（UEFI，EFI 目录: $efi_dir）"
+        $USE_SUDO grub-install --target="$efi_target" \
+            --efi-directory="$efi_dir" \
+            --bootloader-id=debian \
+            --recheck --force >"$grub_log" 2>&1 || grub_install_ok=0
+    elif [[ -n "$boot_disk" ]]; then
+        grub_target_desc="$boot_disk"
+        log_info "步骤 3: 安装 GRUB 到 $boot_disk（BIOS）"
+        $USE_SUDO grub-install --target="$bios_target" \
+            --recheck --force "$boot_disk" >"$grub_log" 2>&1 || grub_install_ok=0
+    else
+        grub_install_ok=0
+        log_warning "步骤 3: 未确定引导磁盘，跳过 grub-install（仅重建配置）"
+    fi
+
+    if [[ -f "$grub_log" ]]; then
+        sed 's/^/    /' "$grub_log" >&2
+        if (( grub_install_ok )); then
+            log_success "grub-install 成功: $grub_target_desc"
         else
-            $USE_SUDO grub-install --target="$bios_target" \
-                --recheck --force "$boot_disk" 2>&1 | tail -3
+            KEEP_RUN_DIR=1
+            log_error "grub-install 失败（退出码非零）: $grub_target_desc"
+            diagnose_grub_install_failure "$grub_log" "${boot_disk:-ESP}"
+            log_error "完整日志: $grub_log"
         fi
     fi
 
     # 最终更新
     log_info "步骤 4: 最终更新配置"
-    $USE_SUDO update-grub 2>/dev/null || true
+    $USE_SUDO update-grub >/dev/null 2>&1 || true
 
     # 验证
+    local cfg_ok=0 n=0
     if [[ -f /boot/grub/grub.cfg ]]; then
-        local n
-        n=$(grep -c "menuentry " /boot/grub/grub.cfg 2>/dev/null || echo 0)
-        log_success "GRUB 启动项: $n 个"
+        n=$(grep -c "menuentry " /boot/grub/grub.cfg 2>/dev/null || true)
+        [[ "$n" =~ ^[0-9]+$ ]] || n=0
+        log_info "GRUB 启动项: $n 个"
+        (( n > 0 )) && cfg_ok=1
     else
         log_error "GRUB 配置文件仍不存在！"
     fi
 
-    log_success "═══════════════════════════════════════════"
-    log_success "🎉 GRUB 修复完成，建议重启验证"
-    log_success "═══════════════════════════════════════════"
+    log_info "═══════════════════════════════════════════"
+    if (( grub_install_ok && cfg_ok )); then
+        log_success "🎉 GRUB 修复完成，建议重启验证"
+        return 0
+    fi
+    log_error "⚠️  GRUB 修复未完全成功，重启前请人工确认引导器状态"
+    log_error "   救援步骤参考 README.md → 「重启后系统无法引导」"
+    return 1
 }
 
 # ── 仅修复模式 ────────────────────────────────────────────────────────────────
@@ -2370,7 +2542,9 @@ main() {
             ;;
         fix-grub)
             check_root
-            fix_grub_mode
+            if ! fix_grub_mode; then
+                exit 1
+            fi
             return 0
             ;;
     esac

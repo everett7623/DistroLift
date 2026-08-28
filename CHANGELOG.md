@@ -4,6 +4,25 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，当前版本与 README 的版本进度保持一致。
 
+## v3.8.2 - 2026-08-28
+
+### 修复
+
+- 修复 Debian/Ubuntu 升级在 `grub-pc` 配置阶段中断的问题：`pre_upgrade_preparation` 过去预设 `grub-pc/install_devices=<盘>` 且 `install_devices_empty=false`，强制 `grub-pc` 的 postinst 在 `dist-upgrade` 事务内执行 `grub-install`；`DEBIAN_FRONTEND=noninteractive` 下 `grub-install` 失败会直接让 postinst `exit 1`，整个 `dist-upgrade` 中断、系统停在半升级状态。现改为预设空 `install_devices` + `install_devices_empty=true`，升级事务内只重建 GRUB 配置。
+- `--fix-grub` 改为检查 `grub-install` 的真实退出码，不再用 `... 2>&1 | tail -3` 吞掉状态并总是打印“修复完成”；失败时输出完整日志、按 GPT 缺 `bios_grub` 分区 / 文件系统不支持 blocklists / 设备无法解析归因，并以非零码退出。
+- `check_upgrade` 的问题包计数不再受 `grep -c ... || echo 0` 影响产生 `0\n0`。
+
+### 优化
+
+- 新增升级后 `verify_boot_loader`：仅对唯一明确的 BIOS 引导磁盘做一次受控、全程记录日志的 `grub-install`；无法确定磁盘或写入失败时不阻断脚本，置位待处理标记、要求显式 `--fix-grub`，并阻止自动 / 快速重启，升级路径以非零码退出。
+- `diagnose_upgrade_failure` 增加 `grub-pc` / `grub-install` 失败特征识别分支，直接给出排查与修复命令。
+- 新增 `diagnose_grub_install_failure`，供 `--fix-grub` 与升级后受控写入共用。
+
+### 变更
+
+- 硬安全约束调整：常规升级不再在 `dist-upgrade` 事务内写引导扇区；升级完成后对唯一明确的 BIOS 引导盘做一次受控 `grub-install`，失败只告警并要求 `--fix-grub`。`docs/SAFETY.md`、`AGENTS.md`、`CLAUDE.md`、`README.md` 同步。
+- 冒烟测试新增：预设中和 `grub-pc`、`verify_boot_loader` 存在且被调用、重启与升级路径识别待处理引导器、`--fix-grub` 检查 `grub-install` 退出码、升级诊断覆盖 `grub-pc`。
+
 ## v3.8.1 - 2026-07-24
 
 ### 安全

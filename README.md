@@ -7,7 +7,7 @@
 [![Debian](https://img.shields.io/badge/Debian-11--13-red.svg)](https://www.debian.org/)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-LTS-orange.svg)](https://ubuntu.com/)
 [![Bash](https://img.shields.io/badge/Language-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Version](https://img.shields.io/badge/Version-3.8.1-brightgreen.svg)](https://github.com/everett7623/DistroLift/releases)
+[![Version](https://img.shields.io/badge/Version-3.8.2-brightgreen.svg)](https://github.com/everett7623/DistroLift/releases)
 
 **DistroLift** 是面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS / NAT VPS 环境深度优化，失败时会停止流程、保留日志并给出修复方向。
 
@@ -22,7 +22,7 @@
 - 🔧 **APT 源安全处理** — 同时识别 `.list` 与 Deb822 `.sources`，升级前备份并暂时禁用附加源
 - 🔒 **APT 锁安全等待** — 等待 APT/dpkg 锁正常释放，不直接删除仍被进程占用的锁文件
 - 💾 **配置完整备份** — 升级前自动备份网络配置、APT 源等关键文件
-- 🖥️ **GRUB 保守处理** — 自动识别 UEFI/BIOS，常规升级仅刷新配置，不自动写入 MBR
+- 🖥️ **GRUB 保守处理** — 升级事务内只重建配置、不写引导扇区；升级完成后对唯一明确的 BIOS 引导盘做一次受控 `grub-install`，失败只告警并要求 `--fix-grub`
 - 🏗️ **多架构兼容** — 支持 x86_64 和 ARM64 (aarch64)，自动选择正确的 GRUB 包和目标
 - 🐳 **容器智能识别** — 自动检测 OpenVZ / LXC / Docker 环境，跳过 GRUB 和 /boot 相关操作
 - 🤖 **确认后自动化** — 默认第一屏输入 `YES` 后，稳定版相邻升级尽量自动继续；`--require-confirm` 可恢复每次升级前人工确认
@@ -222,14 +222,15 @@ sudo bash distro_upgrade.sh --self-update
 1. **升级前检查** — 检查版本、磁盘、内存、Swap、网络、启动模式、动态库依赖及 initramfs 生成能力
 2. **最小升级** (`apt-get upgrade`) — 先处理不涉及复杂依赖变更的软件包
 3. **完整升级** (`apt-get dist-upgrade`) — 执行完整发行版升级
-4. **升级后处理** — 验证最新内核 initramfs、刷新 GRUB 配置并验证目标版本
+4. **升级后处理** — 验证最新内核 initramfs、刷新 GRUB 配置、对唯一明确的 BIOS 引导盘做一次受控 `grub-install`、验证目标版本
 
 ### 安全边界
 
 - 不直接删除 APT/dpkg 锁文件
 - 不自动修改网卡名称
 - 不自动重启网络服务
-- 常规升级不写入 MBR 或无条件重装引导器
+- `dist-upgrade` 事务内不写引导扇区：升级前把 `grub-pc` 预设为“仅重建配置”，`grub-install` 不会在升级事务里执行，也就不会因它失败而中断整机升级
+- 升级完成后只对唯一明确的 BIOS 引导盘做一次受控 `grub-install`；无法确定磁盘或写入失败时不阻断，只告警、要求 `--fix-grub` 并阻止自动重启
 - 升级后不自动执行 `autoremove`
 - 只恢复脚本本次主动停止的自动更新单元
 - 最小升级失败后立即停止，不再带病执行完整升级
@@ -362,6 +363,20 @@ systemctl status apt-daily.service apt-daily-upgrade.service
 sudo bash distro_upgrade.sh --fix-only
 ```
 
+### ❓ 升级中断在 `grub-pc`，提示 `post-installation script ... returned error exit status 1`
+
+v3.8.2 起，升级事务内不再执行 `grub-install`，一般不会再遇到。若从旧版本升级、或系统里已有其他工具把 `grub-pc/install_devices` 设成了会失败的目标，先看 `grub-install` 的真实报错（不要盲目重启）：
+
+```bash
+sudo grub-install --target=i386-pc --recheck /dev/vda
+```
+
+磁盘名以 `lsblk -o NAME,TYPE,FSTYPE,MOUNTPOINT` 为准。若报 `no BIOS Boot Partition` / `will not proceed with blocklists`，说明是 GPT 盘缺 `bios_grub` 分区或 `/boot` 文件系统不支持嵌入，需要先补分区。上面这条成功后再执行：
+
+```bash
+sudo dpkg --configure -a && sudo apt-get -f install && sudo apt-get dist-upgrade
+```
+
 ### ❓ 重启后系统无法引导
 
 先通过救援环境确认根分区、EFI 分区和实际引导磁盘，不要直接套用示例磁盘名。
@@ -480,7 +495,7 @@ systemctl status networking systemd-networkd NetworkManager
 
 ## 📚 版本与进度
 
-- 当前脚本版本：**v3.8.1**（2026-07-24）
+- 当前脚本版本：**v3.8.2**（2026-08-28）
 - 当前生产入口：`distro_upgrade.sh`
 - 当前维护范围：Debian 11 → 12 → 13、Ubuntu LTS 20.04 → 22.04 → 24.04 → 26.04
 - 完整版本历史统一记录在 [CHANGELOG.md](CHANGELOG.md)

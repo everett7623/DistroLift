@@ -172,6 +172,42 @@ grep -Eq 'rm[[:space:]]+-f[[:space:]]+/var/(lib/dpkg|cache/apt).*(lock|lock-fron
 grep -Eq 'dd[[:space:]].*of=.*boot_disk' "$SCRIPT" \
     && fail "main upgrade path writes directly to a boot sector"
 
+# GRUB: dist-upgrade 事务内不得强制 grub-pc 执行 grub-install
+grep -q 'install_devices_empty boolean false' "$SCRIPT" \
+    && fail "pre-upgrade still forces grub-pc grub-install during dist-upgrade"
+prep_grub_block="$(function_block pre_upgrade_preparation)"
+grep -q 'install_devices_empty boolean true' <<<"$prep_grub_block" \
+    || fail "pre-upgrade does not neutralize grub-pc in-transaction grub-install"
+
+# 升级后引导器受控写入：函数存在且被 post_upgrade_fixes 调用
+grep -q '^verify_boot_loader()' "$SCRIPT" || fail "missing verify_boot_loader helper"
+post_fixes_block="$(function_block post_upgrade_fixes)"
+grep -q 'verify_boot_loader' <<<"$post_fixes_block" \
+    || fail "post_upgrade_fixes does not call verify_boot_loader"
+
+# 引导器待处理时必须阻止重启并让升级路径非零退出
+reboot_block="$(function_block safe_reboot)"
+grep -q 'BOOTLOADER_ACTION_REQUIRED' <<<"$reboot_block" \
+    || fail "safe_reboot does not block on a pending bootloader action"
+for upgrade_func in main_upgrade ubuntu_upgrade; do
+    grep -q 'BOOTLOADER_ACTION_REQUIRED' <<<"$(function_block "$upgrade_func")" \
+        || fail "$upgrade_func ignores a pending bootloader action"
+done
+
+# --fix-grub 必须检查 grub-install 真实退出码，不再用管道吞掉状态
+fix_grub_block="$(function_block fix_grub_mode)"
+grep -q 'grub_install_ok=0' <<<"$fix_grub_block" \
+    || fail "fix_grub_mode does not track the grub-install exit status"
+grep -Eq 'grub-install[^|]*\| *tail' <<<"$fix_grub_block" \
+    && fail "fix_grub_mode still pipes grub-install through tail and masks its status"
+
+# grub-install 失败归因与升级诊断覆盖 grub-pc
+grep -q '^diagnose_grub_install_failure()' "$SCRIPT" \
+    || fail "missing diagnose_grub_install_failure helper"
+grep -q 'bios_grub' "$SCRIPT" || fail "grub diagnostics omit the bios_grub partition hint"
+grep -q 'grub-pc' <<<"$(function_block diagnose_upgrade_failure)" \
+    || fail "upgrade failure diagnostics do not cover grub-pc"
+
 cleanup_body="$(function_block cleanup_mode)"
 grep -q 'awk.*\$5' <<<"$cleanup_body" || fail "cleanup disk usage does not use df Use%"
 grep -q "mapfile -d '' -t old_configs" <<<"$cleanup_body" \

@@ -5,7 +5,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ## Current Project State
 
 - Project display name: DistroLift.
-- Current production script: `distro_upgrade.sh` v3.8.1 (`SCRIPT_DATE=2026-07-24`), about 2300 lines.
+- Current production script: `distro_upgrade.sh` v3.8.2 (`SCRIPT_DATE=2026-08-28`).
 - Production scope: Debian 11 -> 12 -> 13 and Ubuntu LTS 20.04 -> 22.04 -> 24.04 -> 26.04.
 - Ubuntu 26.04 codename is `resolute`.
 - Stable adjacent upgrades are automation-first and continue by default; use `--require-confirm` to restore manual confirmation.
@@ -46,6 +46,7 @@ main_upgrade() / ubuntu_upgrade()
   -> show_startup_risk_banner() no-ops if first-screen risk confirmation already passed
   -> confirm_stable_upgrade() for stable adjacent paths
   -> save_network_config()
+  -> backup_primary_sources_list()
   -> pre_upgrade_preparation(target_codename, os_id)
        -> stop_apt_units()
        -> wait_for_apt_locks()
@@ -56,7 +57,7 @@ main_upgrade() / ubuntu_upgrade()
        -> dpkg configure / fix-broken / audit hard gates
        -> refresh debian-archive-keyring or ubuntu-keyring from current trusted sources
        -> clean_apt_sources()
-       -> conservative GRUB debconf preset when a boot disk is detected
+       -> preseed grub-pc to skip in-transaction grub-install (empty install_devices + install_devices_empty=true)
   -> write new /etc/apt/sources.list
   -> apt_update_with_recovery(keyring)
        -> stop on GPG/signature errors without bypassing verification
@@ -66,9 +67,12 @@ main_upgrade() / ubuntu_upgrade()
   -> post_upgrade_fixes()
        -> compare network interface names, warn only
        -> build latest initramfs only if missing
-       -> refresh GRUB config only, no grub-install
+       -> refresh GRUB config
+       -> verify_boot_loader(): one controlled grub-install for a single unambiguous BIOS disk;
+          on ambiguity/failure set BOOTLOADER_ACTION_REQUIRED and warn, never abort
   -> verify target version
-  -> reboot only with --auto-reboot
+  -> if BOOTLOADER_ACTION_REQUIRED: print --fix-grub banner and exit non-zero
+  -> reboot only with --auto-reboot (safe_reboot refuses while BOOTLOADER_ACTION_REQUIRED)
 ```
 
 ### Version Mapping
@@ -85,7 +89,7 @@ When adding a new Debian or Ubuntu release, update the mapping arrays, `SCRIPT_V
 ## Hard Safety Invariants
 
 - Never delete APT/dpkg lock files; only wait for locks.
-- Never write directly to boot sectors in the normal upgrade path.
+- The `dist-upgrade` transaction never writes a boot sector: keep the `grub-pc` preseed (empty `install_devices` + `install_devices_empty=true`). `grub-install` runs only in post-upgrade `verify_boot_loader` (single unambiguous BIOS disk, non-fatal) and explicit `--fix-grub` (must check its real exit code).
 - Do not add `deb-src` lines to generated sources.
 - Keep `check_initramfs_health`, `check_runtime_injection`, keyring refresh, and the GPG refusal path covered by tests.
 - Stable upgrades may be automatic, but high-risk testing upgrades still require explicit opt-in.

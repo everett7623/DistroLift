@@ -7,7 +7,9 @@
 - 已存在的 `/etc/apt/sources.list` 必须成功备份后才能覆盖；文件原本不存在时允许创建。
 - APT 签名验证失败时必须停止，不自动写入 `trusted=yes` 或以其他方式绕过签名检查。
 - 第三方源先备份再禁用，恢复由管理员逐项确认。
-- 常规升级只刷新 GRUB 配置，不写 MBR。
+- `dist-upgrade` 事务内不写引导扇区：升级前把 `grub-pc` 预设为空 `install_devices` + `install_devices_empty=true`，`grub-pc` 的 postinst 只重建 `grub.cfg`，`grub-install` 失败不会中断升级事务。
+- 升级完成后由 `verify_boot_loader` 只对唯一明确的 BIOS 引导盘做一次受控、全程记录日志的 `grub-install`。无法确定磁盘、架构不支持或写入失败时不阻断脚本，只置位待处理标记、要求显式 `--fix-grub`，并阻止自动 / 快速重启，升级路径以非零码退出。
+- `grub-install` 只出现在升级后的 `verify_boot_loader` 受控步骤和显式 `--fix-grub`；`--fix-grub` 检查其真实退出码，失败不假报成功。
 - 网络配置只备份和检查，不自动改名或重启。
 - 升级完成后不自动 `autoremove`。
 - 默认不自动重启；只有显式 `--auto-reboot` 才会在升级成功后重启。
