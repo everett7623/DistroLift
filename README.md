@@ -7,7 +7,7 @@
 [![Debian](https://img.shields.io/badge/Debian-11--13-red.svg)](https://www.debian.org/)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-LTS-orange.svg)](https://ubuntu.com/)
 [![Bash](https://img.shields.io/badge/Language-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Version](https://img.shields.io/badge/Version-3.8.2-brightgreen.svg)](https://github.com/everett7623/DistroLift/releases)
+[![Version](https://img.shields.io/badge/Version-3.8.3-brightgreen.svg)](https://github.com/everett7623/DistroLift/releases)
 
 **DistroLift** 是面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS / NAT VPS 环境深度优化，失败时会停止流程、保留日志并给出修复方向。
 
@@ -373,6 +373,8 @@ sudo grub-install --target=i386-pc --recheck /dev/vda
 
 磁盘名以 `lsblk -o NAME,TYPE,FSTYPE,MOUNTPOINT` 为准。若报 `no BIOS Boot Partition` / `will not proceed with blocklists`，说明是 GPT 盘缺 `bios_grub` 分区或 `/boot` 文件系统不支持嵌入，需要先补分区。上面这条成功后再执行：
 
+若 v3.8.2 日志中的目标盘显示为 `` `-/dev/vda``、`└─/dev/vda` 或 `├─/dev/vda`，这是 `lsblk -s` 树形前缀被误当作设备名，并不表示 `/dev/vda` 已损坏。请先更新到 v3.8.3，确认 `lsblk -d -n -p -r -o NAME,TYPE` 只列出真实磁盘路径，再运行 `sudo bash distro_upgrade.sh --fix-grub`；在修复明确成功前不要重启。
+
 ```bash
 sudo dpkg --configure -a && sudo apt-get -f install && sudo apt-get dist-upgrade
 ```
@@ -495,7 +497,7 @@ systemctl status networking systemd-networkd NetworkManager
 
 ## 📚 版本与进度
 
-- 当前脚本版本：**v3.8.2**（2026-08-28）
+- 当前脚本版本：**v3.8.3**（2026-08-29）
 - 当前生产入口：`distro_upgrade.sh`
 - 当前维护范围：Debian 11 → 12 → 13、Ubuntu LTS 20.04 → 22.04 → 24.04 → 26.04
 - 完整版本历史统一记录在 [CHANGELOG.md](CHANGELOG.md)

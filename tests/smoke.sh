@@ -205,6 +205,8 @@ grep -Eq 'grub-install[^|]*\| *tail' <<<"$fix_grub_block" \
 grep -q '^diagnose_grub_install_failure()' "$SCRIPT" \
     || fail "missing diagnose_grub_install_failure helper"
 grep -q 'bios_grub' "$SCRIPT" || fail "grub diagnostics omit the bios_grub partition hint"
+grep -q 'cannot find a GRUB drive' <<<"$(function_block diagnose_grub_install_failure)" \
+    || fail "grub diagnostics omit malformed or unresolved target drives"
 grep -q 'grub-pc' <<<"$(function_block diagnose_upgrade_failure)" \
     || fail "upgrade failure diagnostics do not cover grub-pc"
 
@@ -274,12 +276,19 @@ findmnt() { echo /dev/mapper/vg-root; }
 readlink() { echo "$2"; }
 lsblk() {
     if [[ " $* " == *" -s "* ]]; then
-        printf '/dev/mapper/vg-root lvm\n/dev/vda2 part\n/dev/vda disk\n'
+        if [[ " $* " == *" -r "* ]]; then
+            printf '/dev/mapper/vg-root lvm\n/dev/vda2 part\n/dev/vda disk\n'
+        else
+            printf '/dev/mapper/vg-root lvm\n`-/dev/vda2 part\n`-/dev/vda disk\n'
+        fi
     else
         printf '/dev/vda disk\n'
     fi
 }
-[[ "$(detect_boot_disk)" == "/dev/vda" ]] || fail "LVM boot disk resolution"
+[[ "$(detect_boot_disk)" == "/dev/vda" ]] \
+    || fail "LVM boot disk resolution should strip lsblk tree formatting via raw output"
+grep -q 'lsblk -s -n -p -r' <<<"$(function_block get_physical_disks_for_device)" \
+    || fail "physical disk resolution does not request raw lsblk output"
 lsblk() {
     if [[ " $* " == *" -s "* ]]; then
         printf '/dev/md0 raid1\n/dev/vda1 part\n/dev/vda disk\n/dev/vdb1 part\n/dev/vdb disk\n'

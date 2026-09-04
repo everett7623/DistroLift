@@ -107,6 +107,9 @@
 #                     - --fix-grub 检查 grub-install 真实退出码，失败不再假报成功，
 #                       按 GPT 缺 bios_grub / 文件系统不支持 blocklists / 设备无法解析归因
 #                     - 新增 grub-pc 配置失败的升级诊断分支
+#   v3.8.3 2026-08-29  修复 lsblk 树形前缀污染 GRUB 目标磁盘
+#                     - 物理磁盘解析强制使用 raw 输出并只接受绝对 /dev 路径，
+#                       避免 `-/dev/vda、├─/dev/vda 等树枝字符传入 grub-install
 # =============================================================================
 # 使用方法:
 #   sudo bash distro_upgrade.sh              # 正常升级（稳定版，默认）
@@ -131,9 +134,9 @@ set -Ee -o pipefail
 # ── 脚本元信息 ────────────────────────────────────────────────────────────────
 PROJECT_NAME="DistroLift"
 PROJECT_SUBTITLE="Debian / Ubuntu LTS 自动逐级升级工具"
-SCRIPT_VERSION="3.8.2"
+SCRIPT_VERSION="3.8.3"
 SCRIPT_NAME="distro_upgrade.sh"
-SCRIPT_DATE="2026-08-28"
+SCRIPT_DATE="2026-08-29"
 SCRIPT_REPO="https://raw.githubusercontent.com/everett7623/DistroLift/main/distro_upgrade.sh"
 # GitHub 在国内可能被阻断，提供 CDN 回退地址
 SCRIPT_REPO_CDN="https://cdn.jsdelivr.net/gh/everett7623/DistroLift@main/distro_upgrade.sh"
@@ -295,8 +298,10 @@ get_physical_disks_for_device() {
     local device="$1"
     [[ -n "$device" ]] || return 0
     device=$(readlink -f "$device" 2>/dev/null || printf '%s' "$device")
-    lsblk -s -n -p -o NAME,TYPE "$device" 2>/dev/null \
-        | awk '$2=="disk"{print $1}' | sort -u
+    # -s 的默认树形输出可能给 NAME 加上 `- / └─ / ├─ 前缀；-r 强制原始字段。
+    # 同时只接受绝对 /dev 路径，绝不把显示用树枝字符传给 grub-install。
+    lsblk -s -n -p -r -o NAME,TYPE "$device" 2>/dev/null \
+        | awk '$2=="disk" && $1 ~ /^\/dev\// {print $1}' | sort -u
 }
 
 detect_boot_disk() {
@@ -319,8 +324,8 @@ detect_boot_disk() {
     fi
 
     # 某些 VPS 的虚拟块设备没有完整父子关系；仅在系统中恰好只有一块磁盘时回退。
-    mapfile -t candidates < <(lsblk -d -n -p -o NAME,TYPE 2>/dev/null \
-        | awk '$2=="disk"{print $1}' | sort -u)
+    mapfile -t candidates < <(lsblk -d -n -p -r -o NAME,TYPE 2>/dev/null \
+        | awk '$2=="disk" && $1 ~ /^\/dev\// {print $1}' | sort -u)
     if (( ${#candidates[@]} == 1 )); then
         echo "${candidates[0]}"
     else
@@ -989,7 +994,7 @@ diagnose_grub_install_failure() {
     elif grep -qi "doesn't support blocklists\|不支持块列表" "$log_file"; then
         log_error "原因: /boot 所在文件系统（如 XFS/Btrfs）不支持 blocklists，且没有可用嵌入区"
         log_error "处理: 需要独立的 ext4 /boot 分区，或补一个 bios_grub 分区后重试"
-    elif grep -qi 'cannot find a device\|failed to get canonical path\|does not exist\|Cannot determine' "$log_file"; then
+    elif grep -qi 'cannot find a GRUB drive\|cannot find a device\|failed to get canonical path\|does not exist\|Cannot determine' "$log_file"; then
         log_error "原因: 目标设备路径无法解析（$disk 可能不是真实物理盘或已改名）"
         log_error "处理: lsblk -o NAME,TYPE 确认物理盘名后再运行 $0 --fix-grub"
     elif grep -qi '/boot/grub.*No such\|/boot.*not a directory\|cannot open .*grub.cfg' "$log_file"; then

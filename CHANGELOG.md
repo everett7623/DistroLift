@@ -4,6 +4,16 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，当前版本与 README 的版本进度保持一致。
 
+## v3.8.3 - 2026-08-29
+
+### 修复
+
+- 修复部分 VPS 上 `lsblk -s` 的树形前缀污染引导磁盘路径：父磁盘曾被解析为 `` `-/dev/vda`` 或 `└─/dev/vda`，导致升级后受控 `grub-install` 报 `cannot find a GRUB drive`。磁盘解析现强制使用 raw 输出，并只接受绝对 `/dev/` 路径。
+
+### 测试
+
+- 新增带 `` `-`` 树枝前缀的 LVM/VPS 磁盘拓扑回归用例，确保传给 `grub-install` 的目标保持为 `/dev/vda`。
+
 ## v3.8.2 - 2026-08-28
 
 ### 修复

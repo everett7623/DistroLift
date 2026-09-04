@@ -70,4 +70,5 @@ cp distro_upgrade.sh README.md CHANGELOG.md docs/*.md tests/smoke.sh "$backup_di
 - 验证 `--require-confirm`、`--auto-reboot` 和默认自动稳定升级行为。
 - 验证组合选项顺序无关、多个动作参数会被拒绝，并检查兼容入口 `debian_upgrade.sh`。
 - 发布可供 `--self-update` 使用的新版本时，必须创建与 `SCRIPT_VERSION` 一致的固定 Git 标签。
+- 涉及块设备解析的测试必须覆盖 `lsblk` tree/raw 输出差异，传给写盘命令的设备名只能是绝对 `/dev/` 路径。
 - 验证失败路径不会删除锁、修改网卡名或写入错误磁盘。
