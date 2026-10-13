@@ -110,6 +110,13 @@
 #   v3.8.3 2026-08-29  修复 lsblk 树形前缀污染 GRUB 目标磁盘
 #                     - 物理磁盘解析强制使用 raw 输出并只接受绝对 /dev 路径，
 #                       避免 `-/dev/vda、├─/dev/vda 等树枝字符传入 grub-install
+#   v3.8.4 2026-10-13  审查修复：日志目录、终端降级与手动选盘加固
+#                     - pre_upgrade_preparation / fix_only_mode 先创建运行日志目录，
+#                       initramfs 预检被跳过时 dpkg 修复不再因 tee 失败被误判失败
+#                     - /dev/tty 存在但无法打开（cron/systemd 无控制终端）时，
+#                       交互确认降级为取消/默认值，不再异常退出
+#                     - --check / --version 检测不到系统版本时给出明确错误并正常退出
+#                     - --fix-grub 手动选择磁盘改用 raw lsblk 输出并只接受 /dev/ 路径
 # =============================================================================
 # 使用方法:
 #   sudo bash distro_upgrade.sh              # 正常升级（稳定版，默认）
@@ -134,9 +141,9 @@ set -Ee -o pipefail
 # ── 脚本元信息 ────────────────────────────────────────────────────────────────
 PROJECT_NAME="DistroLift"
 PROJECT_SUBTITLE="Debian / Ubuntu LTS 自动逐级升级工具"
-SCRIPT_VERSION="3.8.3"
+SCRIPT_VERSION="3.8.4"
 SCRIPT_NAME="distro_upgrade.sh"
-SCRIPT_DATE="2026-08-29"
+SCRIPT_DATE="2026-10-13"
 SCRIPT_REPO="https://raw.githubusercontent.com/everett7623/DistroLift/main/distro_upgrade.sh"
 # GitHub 在国内可能被阻断，提供 CDN 回退地址
 SCRIPT_REPO_CDN="https://cdn.jsdelivr.net/gh/everett7623/DistroLift@main/distro_upgrade.sh"
@@ -1080,6 +1087,9 @@ pre_upgrade_preparation() {
     local os_id="${2:-debian}"
     local keyring_pkg="debian-archive-keyring"
     [[ "$os_id" == "ubuntu" ]] && keyring_pkg="ubuntu-keyring"
+    # 日志目录必须先于第一次 tee 创建：initramfs 预检被跳过时没有其他函数会创建它，
+    # tee 写日志失败会被 pipefail 误判为 dpkg 修复失败。
+    mkdir -p "$RUN_DIR"
     log_info "执行升级前准备工作..."
 
     stop_apt_units
@@ -1140,7 +1150,9 @@ pre_upgrade_preparation() {
             log_warning "未自动检测到唯一引导磁盘，升级后需显式运行 --fix-grub 修复引导"
             if [[ "${REQUIRE_CONFIRM:-0}" == "1" && "${FORCE:-0}" != "1" ]]; then
                 if [[ -e /dev/tty ]]; then
-                    read -p "是否继续升级？[y/N]: " -n 1 -r </dev/tty; echo
+                    # /dev/tty 可能存在但打不开（cron/systemd 无控制终端），失败按取消处理
+                    read -p "是否继续升级？[y/N]: " -n 1 -r </dev/tty || REPLY=""
+                    echo
                 else
                     log_warning "无交互终端，默认取消升级（使用 --force 或取消 --require-confirm 跳过确认）"
                     REPLY=""
@@ -1293,7 +1305,8 @@ safe_reboot() {
 
     if [[ "${AUTO_REBOOT:-0}" != "1" ]]; then
         if [[ -e /dev/tty ]]; then
-            read -p "最后确认：确定要重启吗？[y/N]: " -n 1 -r </dev/tty; echo
+            read -p "最后确认：确定要重启吗？[y/N]: " -n 1 -r </dev/tty || REPLY=""
+            echo
         else
             log_warning "无交互终端，默认取消重启"
             REPLY=""
@@ -1403,7 +1416,8 @@ confirm_startup_risk() {
         exit 1
     fi
 
-    read -r -p "输入 YES 表示已理解风险并继续升级，直接回车取消: " REPLY </dev/tty
+    # /dev/tty 可能存在但打不开（cron/systemd 无控制终端），读取失败按取消处理
+    read -r -p "输入 YES 表示已理解风险并继续升级，直接回车取消: " REPLY </dev/tty || REPLY=""
     if [[ "$REPLY" != "YES" ]]; then
         log_info "已取消升级；请完成快照、备份和控制台准备后再运行"
         exit 0
@@ -1501,7 +1515,11 @@ check_upgrade() {
     fi
 
     local cur nxt cur_info nxt_info cur_name cur_stat nxt_name nxt_stat
-    cur=$(get_current_version)
+    cur=$(get_current_version) || true
+    if [[ -z "$cur" ]]; then
+        log_error "无法确定 Debian 版本，请检查 /etc/os-release 与 /etc/debian_version"
+        return 1
+    fi
     cur_info=$(get_version_info "$cur")
     cur_name=$(echo "$cur_info" | cut -d'|' -f1)
     cur_stat=$(echo "$cur_info" | cut -d'|' -f2)
@@ -1597,7 +1615,11 @@ check_upgrade() {
 
 check_upgrade_ubuntu() {
     local cur nxt cur_info nxt_info cur_name cur_stat nxt_name nxt_stat
-    cur=$(get_current_version)
+    cur=$(get_current_version) || true
+    if [[ -z "$cur" ]]; then
+        log_error "无法确定 Ubuntu 版本，请检查 /etc/os-release 或安装 lsb_release"
+        return 1
+    fi
     cur_info=$(get_version_info "$cur" "ubuntu")
     cur_name=$(echo "$cur_info" | cut -d'|' -f1)
     cur_stat=$(echo "$cur_info" | cut -d'|' -f2)
@@ -1656,7 +1678,8 @@ confirm_stable_upgrade() {
 
     if [[ "${REQUIRE_CONFIRM:-0}" == "1" && "${FORCE:-0}" != "1" ]]; then
         if [[ -e /dev/tty ]]; then
-            read -p "确认升级到 ${distro} ${target} (${target_name})？[y/N]: " -n 1 -r </dev/tty; echo
+            read -p "确认升级到 ${distro} ${target} (${target_name})？[y/N]: " -n 1 -r </dev/tty || REPLY=""
+            echo
         else
             log_warning "无交互终端，默认取消（取消 --require-confirm 或使用 --force 可跳过确认）"
             REPLY=""
@@ -1672,7 +1695,7 @@ confirm_stable_upgrade() {
 # ── 主升级流程 ────────────────────────────────────────────────────────────────
 main_upgrade() {
     local cur cur_info cur_name cur_stat nxt nxt_info nxt_name nxt_stat
-    cur=$(get_current_version)
+    cur=$(get_current_version) || true
     if [[ -z "$cur" ]]; then
         log_error "无法检测当前版本，退出"
         exit 1
@@ -2056,20 +2079,22 @@ fix_grub_mode() {
 
     if [[ -z "$boot_disk" ]]; then
         log_warning "未能自动检测引导磁盘，请手动选择："
+        # 与 get_physical_disks_for_device 相同的约束：raw 输出 + 只接受绝对 /dev/ 路径，
+        # 避免 lsblk 树形前缀或相对名进入 grub-install。
         local disks=()
         while read -r line; do
             disks+=("$line")
-            echo "  $((${#disks[@]})). /dev/$line"
-        done < <(lsblk -d -n -o NAME,TYPE,SIZE | awk '$2=="disk"{print $1" - "$3}')
+            echo "  $((${#disks[@]})). $line"
+        done < <(lsblk -d -n -p -r -o NAME,TYPE,SIZE | awk '$2=="disk" && $1 ~ /^\/dev\// {print $1" - "$3}')
 
         if [[ -e /dev/tty ]]; then
-            read -p "输入编号或回车跳过: " -r </dev/tty
+            read -p "输入编号或回车跳过: " -r </dev/tty || REPLY=""
         else
             log_warning "无交互终端，跳过磁盘选择"
             REPLY=""
         fi
         if [[ "$REPLY" =~ ^[0-9]+$ ]] && (( REPLY >= 1 && REPLY <= ${#disks[@]} )); then
-            boot_disk="/dev/$(echo "${disks[$((REPLY-1))]}" | awk '{print $1}')"
+            boot_disk="$(echo "${disks[$((REPLY-1))]}" | awk '{print $1}')"
             log_info "已选择: $boot_disk"
         fi
     fi
@@ -2156,6 +2181,8 @@ fix_only_mode() {
     log_info "🔧 系统修复模式"
     log_info "═══════════════════════════════════════════"
 
+    # 同 pre_upgrade_preparation：先建日志目录，避免 tee 失败被误判为修复失败
+    mkdir -p "$RUN_DIR"
     log_info "1/6 停止 apt 系统定时器"
     stop_apt_units
 
@@ -2509,8 +2536,12 @@ main() {
             return 0
             ;;
         version)
-            os_id=$(get_os_id)
-            v=$(get_current_version)
+            os_id=$(get_os_id || true)
+            v=$(get_current_version) || true
+            if [[ -z "$v" ]]; then
+                log_error "无法确定系统版本"
+                exit 1
+            fi
             vi=$(get_version_info "$v" "$os_id")
             IFS='|' read -r codename status <<<"$vi"
             [[ "$os_id" == "ubuntu" ]] && distro="Ubuntu" || distro="Debian"

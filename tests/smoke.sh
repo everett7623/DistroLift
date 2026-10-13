@@ -200,6 +200,10 @@ grep -q 'grub_install_ok=0' <<<"$fix_grub_block" \
     || fail "fix_grub_mode does not track the grub-install exit status"
 grep -Eq 'grub-install[^|]*\| *tail' <<<"$fix_grub_block" \
     && fail "fix_grub_mode still pipes grub-install through tail and masks its status"
+grep -q 'lsblk -d -n -p -r' <<<"$fix_grub_block" \
+    || fail "manual GRUB disk selection does not request raw lsblk output"
+grep -q 'boot_disk="/dev/\$(' <<<"$fix_grub_block" \
+    && fail "manual GRUB disk selection still prepends /dev/ to unvalidated lsblk names"
 
 # grub-install 失败归因与升级诊断覆盖 grub-pc
 grep -q '^diagnose_grub_install_failure()' "$SCRIPT" \
@@ -255,6 +259,17 @@ grep -q 'if ! run_apt_noninteractive --fix-broken' <<<"$prep_block" \
     || fail "pre-upgrade does not stop on dependency repair failure"
 grep -q 'if ! audit_output=.*dpkg --audit' <<<"$prep_block" \
     || fail "pre-upgrade does not detect dpkg audit command failure"
+grep -q 'mkdir -p "\$RUN_DIR"' <<<"$prep_block" \
+    || fail "pre-upgrade does not create the log dir before the first tee"
+fix_only_block="$(function_block fix_only_mode)"
+grep -q 'mkdir -p "\$RUN_DIR"' <<<"$fix_only_block" \
+    || fail "fix-only does not create the log dir before the first tee"
+for version_probe in check_upgrade check_upgrade_ubuntu main_upgrade; do
+    grep -q 'get_current_version) || true' <<<"$(function_block "$version_probe")" \
+        || fail "$version_probe aborts instead of reporting version detection failure"
+done
+[[ "$(grep -c '</dev/tty || REPLY=""' "$SCRIPT" || true)" -eq 5 ]] \
+    || fail "interactive tty reads must degrade to a safe default on open failure"
 [[ "$(grep -c 'backup_primary_sources_list.*sources.list.backup' "$SCRIPT")" -eq 2 ]] \
     || fail "both distro paths must guard the primary sources backup"
 grep -Fq 'sources.list.backup.${RUN_ID}' "$SCRIPT" \

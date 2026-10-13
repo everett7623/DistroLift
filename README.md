@@ -7,7 +7,7 @@
 [![Debian](https://img.shields.io/badge/Debian-11--13-red.svg)](https://www.debian.org/)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-LTS-orange.svg)](https://ubuntu.com/)
 [![Bash](https://img.shields.io/badge/Language-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Version](https://img.shields.io/badge/Version-3.8.3-brightgreen.svg)](https://github.com/everett7623/DistroLift/releases)
+[![Version](https://img.shields.io/badge/Version-3.8.4-brightgreen.svg)](https://github.com/everett7623/DistroLift/releases)
 
 **DistroLift** 是面向 Debian 与 Ubuntu LTS 的自动化升级脚本，支持从旧版本安全逐级升级到最新受支持版本。针对 VPS / NAT VPS 环境深度优化，失败时会停止流程、保留日志并给出修复方向。
 
@@ -497,7 +497,7 @@ systemctl status networking systemd-networkd NetworkManager
 
 ## 📚 版本与进度
 
-- 当前脚本版本：**v3.8.3**（2026-08-29）
+- 当前脚本版本：**v3.8.4**（2026-10-13）
 - 当前生产入口：`distro_upgrade.sh`
 - 当前维护范围：Debian 11 → 12 → 13、Ubuntu LTS 20.04 → 22.04 → 24.04 → 26.04
 - 完整版本历史统一记录在 [CHANGELOG.md](CHANGELOG.md)
